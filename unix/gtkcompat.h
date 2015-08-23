@@ -1,7 +1,7 @@
 /*
  * Header file to make compatibility with older GTK versions less
  * painful, by #defining various things that are pure spelling changes
- * between GTK1 and GTK2.
+ * between GTK1 and GTK2, or between 2 and 3.
  */
 
 #if !GTK_CHECK_VERSION(2,0,0)
@@ -156,3 +156,28 @@
 
 #endif
 
+#if GTK_CHECK_VERSION(3,0,0)
+#define STANDARD_OK_LABEL "_OK"
+#define STANDARD_OPEN_LABEL "_Open"
+#define STANDARD_CANCEL_LABEL "_Cancel"
+#else
+#define STANDARD_OK_LABEL GTK_STOCK_OK
+#define STANDARD_OPEN_LABEL GTK_STOCK_OPEN
+#define STANDARD_CANCEL_LABEL GTK_STOCK_CANCEL
+#endif
+
+#if GTK_CHECK_VERSION(3,0,0)
+#define gtk_hseparator_new() gtk_separator_new(GTK_ORIENTATION_HORIZONTAL)
+/* Fortunately, my hboxes and vboxes never actually set homogeneous to
+ * TRUE, so I can just wrap these deprecated constructors with a macro
+ * without also having to arrange a call to gtk_box_set_homogeneous. */
+#define gtk_hbox_new(homogeneous, spacing) \
+    gtk_box_new(GTK_ORIENTATION_HORIZONTAL, spacing)
+#define gtk_vbox_new(homogeneous, spacing) \
+    gtk_box_new(GTK_ORIENTATION_VERTICAL, spacing)
+#define gtk_vscrollbar_new(adjust) \
+    gtk_scrollbar_new(GTK_ORIENTATION_VERTICAL, adjust)
+
+#define gdk_get_display() gdk_display_get_name(gdk_display_get_default())
+
+#endif

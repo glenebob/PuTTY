@@ -127,8 +127,13 @@ static gboolean listitem_button_release(GtkWidget *item, GdkEventButton *event,
 #if !GTK_CHECK_VERSION(2,4,0)
 static void menuitem_activate(GtkMenuItem *item, gpointer data);
 #endif
+#if GTK_CHECK_VERSION(3,0,0)
+static void colourchoose_response(GtkDialog *dialog,
+                                  gint response_id, gpointer data);
+#else
 static void coloursel_ok(GtkButton *button, gpointer data);
 static void coloursel_cancel(GtkButton *button, gpointer data);
+#endif
 static void window_destroy(GtkWidget *widget, gpointer data);
 int get_listitemheight(GtkWidget *widget);
 
@@ -1133,20 +1138,36 @@ void dlg_coloursel_start(union control *ctrl, void *dlg, int r, int g, int b)
 {
     struct dlgparam *dp = (struct dlgparam *)dlg;
     struct uctrl *uc = dlg_find_byctrl(dp, ctrl);
-    GtkWidget *okbutton, *cancelbutton;
 
+#if GTK_CHECK_VERSION(3,0,0)
+    GtkWidget *coloursel =
+	gtk_color_chooser_dialog_new("Select a colour",
+                                     GTK_WINDOW(dp->window));
+    gtk_color_chooser_set_use_alpha(GTK_COLOR_CHOOSER(coloursel), FALSE);
+#else
+    GtkWidget *okbutton, *cancelbutton;
     GtkWidget *coloursel =
 	gtk_color_selection_dialog_new("Select a colour");
     GtkColorSelectionDialog *ccs = GTK_COLOR_SELECTION_DIALOG(coloursel);
     GtkColorSelection *cs = GTK_COLOR_SELECTION
         (gtk_color_selection_dialog_get_color_selection(ccs));
+    gtk_color_selection_set_has_opacity_control(cs, FALSE);
+#endif
 
     dp->coloursel_result.ok = FALSE;
 
     gtk_window_set_modal(GTK_WINDOW(coloursel), TRUE);
-    gtk_color_selection_set_has_opacity_control(cs, FALSE);
 
-#if GTK_CHECK_VERSION(2,0,0)
+#if GTK_CHECK_VERSION(3,0,0)
+    {
+        GdkRGBA rgba;
+        rgba.red = r / 255.0;
+        rgba.green = g / 255.0;
+        rgba.blue = b / 255.0;
+        rgba.alpha = 1.0;              /* fully opaque! */
+        gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(coloursel), &rgba);
+    }
+#elif GTK_CHECK_VERSION(2,0,0)
     {
         GdkColor col;
         col.red = r * 0x0101;
@@ -1165,6 +1186,13 @@ void dlg_coloursel_start(union control *ctrl, void *dlg, int r, int g, int b)
     }
 #endif
 
+    g_object_set_data(G_OBJECT(coloursel), "user-data", (gpointer)uc);
+
+#if GTK_CHECK_VERSION(3,0,0)
+    g_signal_connect(G_OBJECT(coloursel), "response",
+                     G_CALLBACK(colourchoose_response), (gpointer)dp);
+#else
+
 #if GTK_CHECK_VERSION(2,0,0)
     g_object_get(G_OBJECT(ccs),
                  "ok-button", &okbutton,
@@ -1178,7 +1206,6 @@ void dlg_coloursel_start(union control *ctrl, void *dlg, int r, int g, int b)
 			(gpointer)coloursel);
     g_object_set_data(G_OBJECT(cancelbutton), "user-data",
 			(gpointer)coloursel);
-    g_object_set_data(G_OBJECT(coloursel), "user-data", (gpointer)uc);
     g_signal_connect(G_OBJECT(okbutton), "clicked",
                      G_CALLBACK(coloursel_ok), (gpointer)dp);
     g_signal_connect(G_OBJECT(cancelbutton), "clicked",
@@ -1189,6 +1216,7 @@ void dlg_coloursel_start(union control *ctrl, void *dlg, int r, int g, int b)
     g_signal_connect_swapped(G_OBJECT(cancelbutton), "clicked",
                              G_CALLBACK(gtk_widget_destroy),
                              (gpointer)coloursel);
+#endif
     gtk_widget_show(coloursel);
 }
 
@@ -1624,16 +1652,43 @@ static void fontsel_ok(GtkButton *button, gpointer data)
 #endif
 }
 
+#if GTK_CHECK_VERSION(3,0,0)
+
+static void colourchoose_response(GtkDialog *dialog,
+                                  gint response_id, gpointer data)
+{
+    struct dlgparam *dp = (struct dlgparam *)data;
+    struct uctrl *uc = g_object_get_data(G_OBJECT(dialog), "user-data");
+
+    if (response_id == GTK_RESPONSE_OK) {
+        GdkRGBA rgba;
+        gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(dialog), &rgba);
+        dp->coloursel_result.r = (int) (255 * rgba.red);
+        dp->coloursel_result.g = (int) (255 * rgba.green);
+        dp->coloursel_result.b = (int) (255 * rgba.blue);
+        dp->coloursel_result.ok = TRUE;
+    } else {
+        dp->coloursel_result.ok = FALSE;
+    }
+
+    uc->ctrl->generic.handler(uc->ctrl, dp, dp->data, EVENT_CALLBACK);
+
+    gtk_widget_destroy(GTK_WIDGET(dialog));
+}
+
+#else /* GTK 1/2 coloursel response handlers */
+
 static void coloursel_ok(GtkButton *button, gpointer data)
 {
     struct dlgparam *dp = (struct dlgparam *)data;
     gpointer coloursel = g_object_get_data(G_OBJECT(button), "user-data");
     struct uctrl *uc = g_object_get_data(G_OBJECT(coloursel), "user-data");
-    GtkColorSelection *cs = GTK_COLOR_SELECTION
-        (gtk_color_selection_dialog_get_color_selection
-         (GTK_COLOR_SELECTION_DIALOG(coloursel)));
+
 #if GTK_CHECK_VERSION(2,0,0)
     {
+        GtkColorSelection *cs = GTK_COLOR_SELECTION
+            (gtk_color_selection_dialog_get_color_selection
+             (GTK_COLOR_SELECTION_DIALOG(coloursel)));
         GdkColor col;
         gtk_color_selection_get_current_color(cs, &col);
         dp->coloursel_result.r = col.red / 0x0100;
@@ -1642,6 +1697,9 @@ static void coloursel_ok(GtkButton *button, gpointer data)
     }
 #else
     {
+        GtkColorSelection *cs = GTK_COLOR_SELECTION
+            (gtk_color_selection_dialog_get_color_selection
+             (GTK_COLOR_SELECTION_DIALOG(coloursel)));
         gdouble cvals[4];
         gtk_color_selection_get_color(cs, cvals);
         dp->coloursel_result.r = (int) (255 * cvals[0]);
@@ -1662,6 +1720,8 @@ static void coloursel_cancel(GtkButton *button, gpointer data)
     uc->ctrl->generic.handler(uc->ctrl, dp, dp->data, EVENT_CALLBACK);
 }
 
+#endif /* end of coloursel response handlers */
+
 static void filefont_clicked(GtkButton *button, gpointer data)
 {
     struct dlgparam *dp = (struct dlgparam *)data;
@@ -1674,8 +1734,8 @@ static void filefont_clicked(GtkButton *button, gpointer data)
              (uc->ctrl->fileselect.for_writing ?
               GTK_FILE_CHOOSER_ACTION_SAVE :
               GTK_FILE_CHOOSER_ACTION_OPEN),
-             GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
-             GTK_STOCK_OPEN, GTK_RESPONSE_ACCEPT,
+             STANDARD_CANCEL_LABEL, GTK_RESPONSE_CANCEL,
+             STANDARD_OPEN_LABEL, GTK_RESPONSE_ACCEPT,
              (const gchar *)NULL);
 	gtk_window_set_modal(GTK_WINDOW(filechoose), TRUE);
 	g_object_set_data(G_OBJECT(filechoose), "user-data", (gpointer)uc);
@@ -2022,18 +2082,30 @@ GtkWidget *layout_ctrls(struct dlgparam *dp, struct Shortcuts *scs,
                                  G_CALLBACK(editbox_lostfocus), dp);
                 g_signal_connect(G_OBJECT(signalobject), "focus_out_event",
                                  G_CALLBACK(editbox_lostfocus), dp);
+
+                /*
+                 * Find out the edit box's height, which we'll need
+                 * for vertical centring below (and, in GTK2, size
+                 * tweaking as well).
+                 */
+                gtk_widget_size_request(w, &req);
+
+#if !GTK_CHECK_VERSION(3,0,0)
 		/*
 		 * Edit boxes, for some strange reason, have a minimum
 		 * width of 150 in GTK 1.2. We don't want this - we'd
 		 * rather the edit boxes acquired their natural width
 		 * from the column layout of the rest of the box.
-		 *
-		 * Also, while we're here, we'll squirrel away the
-		 * edit box height so we can use that to centre its
-		 * label vertically beside it.
 		 */
-                gtk_widget_size_request(w, &req);
                 gtk_widget_set_size_request(w, 10, req.height);
+#else
+                /*
+                 * In GTK 3, this is still true, but there's a special
+                 * method for GtkEntry in particular to fix it.
+                 */
+                if (GTK_IS_ENTRY(w))
+                    gtk_entry_set_width_chars(GTK_ENTRY(w), 1);
+#endif
 
 		if (ctrl->generic.label) {
 		    GtkWidget *label, *container;
@@ -2798,7 +2870,21 @@ int get_listitemheight(GtkWidget *w)
 #else
     int height;
     GtkCellRenderer *cr = gtk_cell_renderer_text_new();
+#if GTK_CHECK_VERSION(3,0,0)
+    {
+        GtkRequisition req;
+        /*
+         * Since none of my list items wraps in this GUI, no
+         * interesting width-for-height behaviour should be happening,
+         * so I don't think it should matter here whether I ask for
+         * the minimum or natural height.
+         */
+        gtk_cell_renderer_get_preferred_size(cr, w, &req, NULL);
+        height = req.height;
+    }
+#else
     gtk_cell_renderer_get_size(cr, w, NULL, NULL, NULL, NULL, &height);
+#endif
     g_object_ref(G_OBJECT(cr));
     g_object_ref_sink(G_OBJECT(cr));
     g_object_unref(G_OBJECT(cr));
@@ -2871,7 +2957,10 @@ void set_dialog_action_area(GtkDialog *dlg, GtkWidget *w)
                      w, FALSE, TRUE, 0);
     gtk_widget_show(w);
     gtk_widget_hide(gtk_dialog_get_action_area(dlg));
+#if !GTK_CHECK_VERSION(3,0,0)
+    /* This cosmetic property is withdrawn in GTK 3's GtkDialog */
     g_object_set(G_OBJECT(dlg), "has-separator", TRUE, (const char *)NULL);
+#endif
 #endif
 }
 

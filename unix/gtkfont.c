@@ -2092,6 +2092,8 @@ static int fontinfo_selorder_compare(void *av, void *bv)
     return 0;
 }
 
+static void unifontsel_draw_preview_text(unifontsel_internal *fs);
+
 static void unifontsel_deselect(unifontsel_internal *fs)
 {
     fs->selected = NULL;
@@ -2099,6 +2101,7 @@ static void unifontsel_deselect(unifontsel_internal *fs)
     gtk_list_store_clear(fs->size_model);
     gtk_widget_set_sensitive(fs->u.ok_button, FALSE);
     gtk_widget_set_sensitive(fs->size_entry, FALSE);
+    unifontsel_draw_preview_text(fs);
 }
 
 static void unifontsel_setup_familylist(unifontsel_internal *fs)
@@ -2108,6 +2111,8 @@ static void unifontsel_setup_familylist(unifontsel_internal *fs)
     char *currfamily = NULL;
     int currflags = -1;
     fontinfo *info;
+
+    fs->inhibit_response = TRUE;
 
     gtk_list_store_clear(fs->family_model);
     listindex = 0;
@@ -2159,6 +2164,8 @@ static void unifontsel_setup_familylist(unifontsel_internal *fs)
      */
     if (fs->selected && fs->selected->familyindex < 0)
 	unifontsel_deselect(fs);
+
+    fs->inhibit_response = FALSE;
 }
 
 static void unifontsel_setup_stylelist(unifontsel_internal *fs,
@@ -2304,29 +2311,29 @@ static void unifontsel_draw_preview_text_inner(unifont_drawctx *dctx,
     } else
 	font = NULL;
 
-    if (font) {
 #ifdef DRAW_TEXT_GDK
-        if (dctx->type == DRAWTYPE_GDK) {
-            gdk_gc_set_foreground(dctx->u.gdk.gc, &fs->preview_bg);
-            gdk_draw_rectangle(dctx->u.gdk.target, dctx->u.gdk.gc, 1, 0, 0,
-                               fs->preview_width, fs->preview_height);
-            gdk_gc_set_foreground(dctx->u.gdk.gc, &fs->preview_fg);
-        }
+    if (dctx->type == DRAWTYPE_GDK) {
+        gdk_gc_set_foreground(dctx->u.gdk.gc, &fs->preview_bg);
+        gdk_draw_rectangle(dctx->u.gdk.target, dctx->u.gdk.gc, 1, 0, 0,
+                           fs->preview_width, fs->preview_height);
+        gdk_gc_set_foreground(dctx->u.gdk.gc, &fs->preview_fg);
+    }
 #endif
 #ifdef DRAW_TEXT_CAIRO
-        if (dctx->type == DRAWTYPE_CAIRO) {
-            cairo_set_source_rgb(dctx->u.cairo.cr,
-                                 fs->preview_bg.red / 65535.0,
-                                 fs->preview_bg.green / 65535.0,
-                                 fs->preview_bg.blue / 65535.0);
-            cairo_paint(dctx->u.cairo.cr);
-            cairo_set_source_rgb(dctx->u.cairo.cr,
-                                 fs->preview_fg.red / 65535.0,
-                                 fs->preview_fg.green / 65535.0,
-                                 fs->preview_fg.blue / 65535.0);
-        }
+    if (dctx->type == DRAWTYPE_CAIRO) {
+        cairo_set_source_rgb(dctx->u.cairo.cr,
+                             fs->preview_bg.red / 65535.0,
+                             fs->preview_bg.green / 65535.0,
+                             fs->preview_bg.blue / 65535.0);
+        cairo_paint(dctx->u.cairo.cr);
+        cairo_set_source_rgb(dctx->u.cairo.cr,
+                             fs->preview_fg.red / 65535.0,
+                             fs->preview_fg.green / 65535.0,
+                             fs->preview_fg.blue / 65535.0);
+    }
 #endif
 
+    if (font) {
         /*
          * The pangram used here is rather carefully
          * constructed: it contains a sequence of very narrow
@@ -2429,6 +2436,7 @@ static void unifontsel_select_font(unifontsel_internal *fs,
 {
     int index;
     int minval, maxval;
+    gboolean success;
     GtkTreePath *treepath;
     GtkTreeIter iter;
 
@@ -2469,7 +2477,9 @@ static void unifontsel_select_font(unifontsel_internal *fs,
 	 treepath);
     gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(fs->family_list),
 				 treepath, NULL, FALSE, 0.0, 0.0);
-    gtk_tree_model_get_iter(GTK_TREE_MODEL(fs->family_model), &iter, treepath);
+    success = gtk_tree_model_get_iter(GTK_TREE_MODEL(fs->family_model),
+                                      &iter, treepath);
+    assert(success);
     gtk_tree_path_free(treepath);
 
     /*
@@ -2914,6 +2924,39 @@ static gint unifontsel_configure_area(GtkWidget *widget,
     return TRUE;
 }
 
+static void get_label_text_dimensions(const char *text,
+                                      int *width, int *height)
+{
+    /*
+     * Determine the dimensions of a piece of text in the standard
+     * font used in GTK interface elements like labels. We do this by
+     * instantiating an actual GtkLabel, and then querying its size.
+     *
+     * But GTK2 and GTK3 require us to query the size completely
+     * differently. I'm sure there ought to be an easier approach than
+     * the way I'm doing this in GTK3, too!
+     */
+    GtkWidget *label = gtk_label_new(text);
+
+#if GTK_CHECK_VERSION(3,0,0)
+    PangoLayout *layout = gtk_label_get_layout(GTK_LABEL(label));
+    PangoRectangle logrect;
+    pango_layout_get_extents(layout, NULL, &logrect);
+    *width = logrect.width / PANGO_SCALE;
+    *height = logrect.height / PANGO_SCALE;
+#else
+    GtkRequisition req;
+    gtk_widget_size_request(label, &req);
+    *width = req.width;
+    *height = req.height;
+#endif
+
+    g_object_ref_sink(G_OBJECT(label));
+#if GTK_CHECK_VERSION(2,10,0)
+    g_object_unref(label);
+#endif
+}
+
 unifontsel *unifontsel_new(const char *wintitle)
 {
     unifontsel_internal *fs = snew(unifontsel_internal);
@@ -2927,25 +2970,22 @@ unifontsel *unifontsel_new(const char *wintitle)
     fs->selected = NULL;
 
     {
+        int width, height;
+
 	/*
 	 * Invent some magic size constants.
 	 */
-	GtkRequisition req;
-	label = gtk_label_new("Quite Long Font Name (Foundry)");
-	gtk_widget_size_request(label, &req);
-	font_width = req.width;
-	lists_height = 14 * req.height;
-	preview_height = 5 * req.height;
-	gtk_label_set_text(GTK_LABEL(label), "Italic Extra Condensed");
-	gtk_widget_size_request(label, &req);
-	style_width = req.width;
-	gtk_label_set_text(GTK_LABEL(label), "48000");
-	gtk_widget_size_request(label, &req);
-	size_width = req.width;
-        g_object_ref_sink(G_OBJECT(label));
-#if GTK_CHECK_VERSION(2,10,0)
-	g_object_unref(label);
-#endif
+	get_label_text_dimensions("Quite Long Font Name (Foundry)",
+                                  &width, &height);
+	font_width = width;
+	lists_height = 14 * height;
+	preview_height = 5 * height;
+
+	get_label_text_dimensions("Italic Extra Condensed", &width, &height);
+	style_width = width;
+
+	get_label_text_dimensions("48000", &width, &height);
+	size_width = width;
     }
 
     /*
@@ -2956,18 +2996,23 @@ unifontsel *unifontsel_new(const char *wintitle)
     fs->u.window = GTK_WINDOW(gtk_dialog_new());
     gtk_window_set_title(fs->u.window, wintitle);
     fs->u.cancel_button = gtk_dialog_add_button
-	(GTK_DIALOG(fs->u.window), GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL);
+	(GTK_DIALOG(fs->u.window), STANDARD_CANCEL_LABEL, GTK_RESPONSE_CANCEL);
     fs->u.ok_button = gtk_dialog_add_button
-	(GTK_DIALOG(fs->u.window), GTK_STOCK_OK, GTK_RESPONSE_OK);
+	(GTK_DIALOG(fs->u.window), STANDARD_OK_LABEL, GTK_RESPONSE_OK);
     gtk_widget_grab_default(fs->u.ok_button);
 
     /*
      * Now set up the internal fields, including in particular all
      * the controls that actually allow the user to select fonts.
      */
+#if GTK_CHECK_VERSION(3,0,0)
+    table = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(table), 8);
+#else
     table = gtk_table_new(8, 3, FALSE);
-    gtk_widget_show(table);
     gtk_table_set_col_spacings(GTK_TABLE(table), 8);
+#endif
+    gtk_widget_show(table);
 #if GTK_CHECK_VERSION(2,4,0)
     /* GtkAlignment seems to be the simplest way to put padding round things */
     w = gtk_alignment_new(0, 0, 1, 1);
@@ -2984,7 +3029,12 @@ unifontsel *unifontsel_new(const char *wintitle)
     label = gtk_label_new_with_mnemonic("_Font:");
     gtk_widget_show(label);
     gtk_misc_set_alignment(GTK_MISC(label), 0.0, 0.0);
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_grid_attach(GTK_GRID(table), label, 0, 0, 1, 1);
+    g_object_set(G_OBJECT(label), "hexpand", TRUE, (const char *)NULL);
+#else
     gtk_table_attach(GTK_TABLE(table), label, 0, 1, 0, 1, GTK_FILL, 0, 0, 0);
+#endif
 
     /*
      * The Font list box displays only a string, but additionally
@@ -3014,15 +3064,25 @@ unifontsel *unifontsel_new(const char *wintitle)
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
 				   GTK_POLICY_AUTOMATIC, GTK_POLICY_ALWAYS);
     gtk_widget_set_size_request(scroll, font_width, lists_height);
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_grid_attach(GTK_GRID(table), scroll, 0, 1, 1, 2);
+    g_object_set(G_OBJECT(scroll), "expand", TRUE, (const char *)NULL);
+#else
     gtk_table_attach(GTK_TABLE(table), scroll, 0, 1, 1, 3, GTK_FILL,
 		     GTK_EXPAND | GTK_FILL, 0, 0);
+#endif
     fs->family_model = model;
     fs->family_list = w;
 
     label = gtk_label_new_with_mnemonic("_Style:");
     gtk_widget_show(label);
     gtk_misc_set_alignment(GTK_MISC(label), 0.0, 0.0);
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_grid_attach(GTK_GRID(table), label, 1, 0, 1, 1);
+    g_object_set(G_OBJECT(label), "hexpand", TRUE, (const char *)NULL);
+#else
     gtk_table_attach(GTK_TABLE(table), label, 1, 2, 0, 1, GTK_FILL, 0, 0, 0);
+#endif
 
     /*
      * The Style list box can contain insensitive elements
@@ -3051,15 +3111,25 @@ unifontsel *unifontsel_new(const char *wintitle)
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
 				   GTK_POLICY_AUTOMATIC, GTK_POLICY_ALWAYS);
     gtk_widget_set_size_request(scroll, style_width, lists_height);
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_grid_attach(GTK_GRID(table), scroll, 1, 1, 1, 2);
+    g_object_set(G_OBJECT(scroll), "expand", TRUE, (const char *)NULL);
+#else
     gtk_table_attach(GTK_TABLE(table), scroll, 1, 2, 1, 3, GTK_FILL,
 		     GTK_EXPAND | GTK_FILL, 0, 0);
+#endif
     fs->style_model = model;
     fs->style_list = w;
 
     label = gtk_label_new_with_mnemonic("Si_ze:");
     gtk_widget_show(label);
     gtk_misc_set_alignment(GTK_MISC(label), 0.0, 0.0);
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_grid_attach(GTK_GRID(table), label, 2, 0, 1, 1);
+    g_object_set(G_OBJECT(label), "hexpand", TRUE, (const char *)NULL);
+#else
     gtk_table_attach(GTK_TABLE(table), label, 2, 3, 0, 1, GTK_FILL, 0, 0, 0);
+#endif
 
     /*
      * The Size label attaches primarily to a text input box so
@@ -3070,7 +3140,12 @@ unifontsel *unifontsel_new(const char *wintitle)
     gtk_label_set_mnemonic_widget(GTK_LABEL(label), w);
     gtk_widget_set_size_request(w, size_width, -1);
     gtk_widget_show(w);
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_grid_attach(GTK_GRID(table), w, 2, 1, 1, 1);
+    g_object_set(G_OBJECT(w), "hexpand", TRUE, (const char *)NULL);
+#else
     gtk_table_attach(GTK_TABLE(table), w, 2, 3, 1, 2, GTK_FILL, 0, 0, 0);
+#endif
     g_signal_connect(G_OBJECT(w), "changed", G_CALLBACK(size_entry_changed),
 		     fs);
 
@@ -3093,8 +3168,13 @@ unifontsel *unifontsel_new(const char *wintitle)
     gtk_widget_show(scroll);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
 				   GTK_POLICY_AUTOMATIC, GTK_POLICY_ALWAYS);
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_grid_attach(GTK_GRID(table), scroll, 2, 2, 1, 1);
+    g_object_set(G_OBJECT(scroll), "expand", TRUE, (const char *)NULL);
+#else
     gtk_table_attach(GTK_TABLE(table), scroll, 2, 3, 2, 3, GTK_FILL,
 		     GTK_EXPAND | GTK_FILL, 0, 0);
+#endif
     fs->size_model = model;
     fs->size_list = w;
 
@@ -3143,8 +3223,13 @@ unifontsel *unifontsel_new(const char *wintitle)
     w = gtk_frame_new("Preview of font");
     gtk_container_add(GTK_CONTAINER(w), ww);
     gtk_widget_show(w);
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_grid_attach(GTK_GRID(table), w, 0, 3, 3, 1);
+    g_object_set(G_OBJECT(w), "expand", TRUE, (const char *)NULL);
+#else
     gtk_table_attach(GTK_TABLE(table), w, 0, 3, 3, 4,
 		     GTK_EXPAND | GTK_FILL, GTK_EXPAND | GTK_FILL, 0, 8);
+#endif
 
     /*
      * We only provide the checkboxes for client- and server-side
@@ -3161,7 +3246,12 @@ unifontsel *unifontsel_new(const char *wintitle)
                      G_CALLBACK(unifontsel_button_toggled), fs);
     gtk_widget_show(w);
     fs->filter_buttons[fs->n_filter_buttons++] = w;
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_grid_attach(GTK_GRID(table), w, 0, 4, 3, 1);
+    g_object_set(G_OBJECT(w), "hexpand", TRUE, (const char *)NULL);
+#else
     gtk_table_attach(GTK_TABLE(table), w, 0, 3, 4, 5, GTK_FILL, 0, 0, 0);
+#endif
     w = gtk_check_button_new_with_label("Show server-side fonts");
     g_object_set_data(G_OBJECT(w), "user-data",
                       GINT_TO_POINTER(FONTFLAG_SERVERSIDE));
@@ -3169,7 +3259,12 @@ unifontsel *unifontsel_new(const char *wintitle)
                      G_CALLBACK(unifontsel_button_toggled), fs);
     gtk_widget_show(w);
     fs->filter_buttons[fs->n_filter_buttons++] = w;
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_grid_attach(GTK_GRID(table), w, 0, 5, 3, 1);
+    g_object_set(G_OBJECT(w), "hexpand", TRUE, (const char *)NULL);
+#else
     gtk_table_attach(GTK_TABLE(table), w, 0, 3, 5, 6, GTK_FILL, 0, 0, 0);
+#endif
     w = gtk_check_button_new_with_label("Show server-side font aliases");
     g_object_set_data(G_OBJECT(w), "user-data",
                       GINT_TO_POINTER(FONTFLAG_SERVERALIAS));
@@ -3177,8 +3272,13 @@ unifontsel *unifontsel_new(const char *wintitle)
                      G_CALLBACK(unifontsel_button_toggled), fs);
     gtk_widget_show(w);
     fs->filter_buttons[fs->n_filter_buttons++] = w;
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_grid_attach(GTK_GRID(table), w, 0, 6, 3, 1);
+    g_object_set(G_OBJECT(w), "hexpand", TRUE, (const char *)NULL);
+#else
     gtk_table_attach(GTK_TABLE(table), w, 0, 3, 6, 7, GTK_FILL, 0, 0, 0);
 #endif
+#endif /* NOT_X_WINDOWS */
     w = gtk_check_button_new_with_label("Show non-monospaced fonts");
     g_object_set_data(G_OBJECT(w), "user-data",
                       GINT_TO_POINTER(FONTFLAG_NONMONOSPACED));
@@ -3186,7 +3286,12 @@ unifontsel *unifontsel_new(const char *wintitle)
                      G_CALLBACK(unifontsel_button_toggled), fs);
     gtk_widget_show(w);
     fs->filter_buttons[fs->n_filter_buttons++] = w;
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_grid_attach(GTK_GRID(table), w, 0, 7, 3, 1);
+    g_object_set(G_OBJECT(w), "hexpand", TRUE, (const char *)NULL);
+#else
     gtk_table_attach(GTK_TABLE(table), w, 0, 3, 7, 8, GTK_FILL, 0, 0, 0);
+#endif
 
     assert(fs->n_filter_buttons <= lenof(fs->filter_buttons));
     fs->filter_flags = FONTFLAG_CLIENTSIDE | FONTFLAG_SERVERSIDE |
