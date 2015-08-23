@@ -1219,6 +1219,7 @@ if (defined $makefiles{'vstudio10'} || defined $makefiles{'vstudio12'} || define
             "    <ResourceCompile>\n" .
             "      <Culture>0x0809</Culture>\n" .
             "      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>\n" .
+            "      <AdditionalIncludeDirectories>..\\..\\..\\</AdditionalIncludeDirectories>" .
             "    </ResourceCompile>\n" .
             "    <Bscmake>\n" .
             "      <SuppressStartupBanner>true</SuppressStartupBanner>\n" .
