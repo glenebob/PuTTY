@@ -3498,6 +3498,8 @@ the serial line.
 \b \q{DSR/DTR}: flow control is done using the DSR and DTR wires on
 the serial line.
 
+\S{config-serial-newline} Selecting line termination style
+
 \cfg{winhelp-topic}{serial.newline}
 
 The \q{Line termination} box allows you to choose the style of line
