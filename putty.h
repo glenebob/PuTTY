@@ -329,6 +329,10 @@ enum {
 };
 
 enum {
+    SER_NEWLINE_CR, SER_NEWLINE_LF, SER_NEWLINE_CRLF
+};
+
+enum {
     /* Function key types (CONF_funky_type) */
     FUNKY_TILDE,
     FUNKY_LINUX,
@@ -739,6 +743,7 @@ void cleanup_exit(int);
     X(INT, NONE, nethack_keypad) \
     X(INT, NONE, telnet_keyboard) \
     X(INT, NONE, telnet_newline) \
+    X(INT, NONE, serial_newline) \
     X(INT, NONE, alt_f4) /* is it special? */ \
     X(INT, NONE, alt_space) /* is it special? */ \
     X(INT, NONE, alt_only) /* is it special? */ \
@@ -1112,7 +1117,7 @@ char const *conf_dest(Conf *conf);
  * Exports from sercfg.c.
  */
 void ser_setup_config_box(struct controlbox *b, int midsession,
-			  int parity_mask, int flow_mask);
+                          int parity_mask, int flow_mask, int lineterm_mask);
 
 /*
  * Exports from version.c.

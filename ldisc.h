@@ -18,6 +18,7 @@ typedef struct ldisc_tag {
      * Values cached out of conf.
      */
     int telnet_keyboard, telnet_newline, protocol, localecho, localedit;
+    int serial_newline;
 
     char *buf;
     int buflen, bufsiz, quotenext;

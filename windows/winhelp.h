@@ -155,6 +155,7 @@
 #define WINHELP_CTX_serial_stopbits "serial.stopbits:config-serial-stopbits"
 #define WINHELP_CTX_serial_parity "serial.parity:config-serial-parity"
 #define WINHELP_CTX_serial_flow "serial.flow:config-serial-flow"
+#define WINHELP_CTX_serial_newline "serial.newline:config-serial-newline"
 
 #define WINHELP_CTX_pageant_general "pageant.general:pageant"
 #define WINHELP_CTX_pageant_keylist "pageant.keylist:pageant-mainwin-keylist"

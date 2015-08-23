@@ -3498,6 +3498,17 @@ the serial line.
 \b \q{DSR/DTR}: flow control is done using the DSR and DTR wires on
 the serial line.
 
+\cfg{winhelp-topic}{serial.newline}
+
+The \q{Line termination} box allows you to choose the style of line
+termination used for the serial line.
+
+\b \q{CR}: The Carriage Return character is sent.
+
+\b \q{LF}: The Line Feed character is sent.
+
+\b \q{CR/LF}: Both the Carriage Return and Line Feed characters are sent.
+
 \H{config-file} \ii{Storing configuration in a file}
 
 PuTTY does not currently support storing its configuration in a file

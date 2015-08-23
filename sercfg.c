@@ -124,8 +124,63 @@ static void serial_flow_handler(union control *ctrl, void *dlg,
     }
 }
 
+static void serial_newline_handler(union control *ctrl, void *dlg,
+        void *data, int event)
+{
+    static const struct {
+        const char *name;
+        int val;
+    } newlines[] = {
+        { "CR", SER_NEWLINE_CR },
+        { "LF", SER_NEWLINE_LF },
+        { "CR/LF", SER_NEWLINE_CRLF }
+    };
+
+    int mask = ctrl->listbox.context.i;
+    int i, j;
+    Conf *conf = (Conf *)data;
+
+    if (event == EVENT_REFRESH) {
+        /* Fetching this once at the start of the function ensures we
+        * remember what the right value is supposed to be when
+        * operations below cause reentrant calls to this function. */
+        int oldnewline = conf_get_int(conf, CONF_serial_newline);
+
+        dlg_update_start(ctrl, dlg);
+        dlg_listbox_clear(ctrl, dlg);
+        for (i = 0; i < lenof(newlines); i++)  {
+            if (mask & (1 << i))
+                dlg_listbox_addwithid(ctrl, dlg, newlines[i].name,
+                newlines[i].val);
+        }
+        for (i = j = 0; i < lenof(newlines); i++) {
+            if (mask & (1 << i)) {
+                if (oldnewline == newlines[i].val) {
+                    dlg_listbox_select(ctrl, dlg, j);
+                    break;
+                }
+                j++;
+            }
+        }
+        if (i == lenof(newlines)) {    /* an unsupported setting was chosen */
+            dlg_listbox_select(ctrl, dlg, 0);
+            oldnewline = SER_NEWLINE_CR;
+        }
+        dlg_update_done(ctrl, dlg);
+        conf_set_int(conf, CONF_serial_newline, oldnewline);    /* restore */
+    }
+    else if (event == EVENT_SELCHANGE) {
+        int i = dlg_listbox_index(ctrl, dlg);
+        if (i < 0)
+            i = SER_NEWLINE_CR;
+        else
+            i = dlg_listbox_getid(ctrl, dlg, i);
+        conf_set_int(conf, CONF_serial_newline, i);
+    }
+}
+
 void ser_setup_config_box(struct controlbox *b, int midsession,
-			  int parity_mask, int flow_mask)
+                          int parity_mask, int flow_mask, int lineterm_mask)
 {
     struct controlset *s;
     union control *c;
@@ -195,12 +250,15 @@ void ser_setup_config_box(struct controlbox *b, int midsession,
      * Stop bits come in units of one half.
      */
     ctrl_editbox(s, "Stop bits", 't', 40,
-		 HELPCTX(serial_stopbits),
-		 conf_editbox_handler, I(CONF_serstopbits), I(-2));
+        HELPCTX(serial_stopbits),
+        conf_editbox_handler, I(CONF_serstopbits), I(-2));
     ctrl_droplist(s, "Parity", 'p', 40,
-		  HELPCTX(serial_parity),
-		  serial_parity_handler, I(parity_mask));
+        HELPCTX(serial_parity),
+        serial_parity_handler, I(parity_mask));
     ctrl_droplist(s, "Flow control", 'f', 40,
-		  HELPCTX(serial_flow),
-		  serial_flow_handler, I(flow_mask));
+        HELPCTX(serial_flow),
+        serial_flow_handler, I(flow_mask));
+    ctrl_droplist(s, "Line termination", 'n', 40,
+        HELPCTX(serial_newline),
+        serial_newline_handler, I(lineterm_mask));
 }

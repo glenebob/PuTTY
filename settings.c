@@ -533,6 +533,7 @@ void save_open_settings(void *sesskey, Conf *conf)
     write_setting_i(sesskey, "CtrlAltKeys", conf_get_int(conf, CONF_ctrlaltkeys));
     write_setting_i(sesskey, "TelnetKey", conf_get_int(conf, CONF_telnet_keyboard));
     write_setting_i(sesskey, "TelnetRet", conf_get_int(conf, CONF_telnet_newline));
+    write_setting_i(sesskey, "SerialRet", conf_get_int(conf, CONF_serial_newline));
     write_setting_i(sesskey, "LocalEcho", conf_get_int(conf, CONF_localecho));
     write_setting_i(sesskey, "LocalEdit", conf_get_int(conf, CONF_localedit));
     write_setting_s(sesskey, "Answerback", conf_get_str(conf, CONF_answerback));
@@ -835,6 +836,7 @@ void load_open_settings(void *sesskey, Conf *conf)
     gppi(sesskey, "CtrlAltKeys", 1, conf, CONF_ctrlaltkeys);
     gppi(sesskey, "TelnetKey", 0, conf, CONF_telnet_keyboard);
     gppi(sesskey, "TelnetRet", 1, conf, CONF_telnet_newline);
+    gppi(sesskey, "SerialRet", SER_NEWLINE_CR, conf, CONF_serial_newline);
     gppi(sesskey, "LocalEcho", AUTO, conf, CONF_localecho);
     gppi(sesskey, "LocalEdit", AUTO, conf, CONF_localedit);
     gpps(sesskey, "Answerback", "PuTTY", conf, CONF_answerback);
