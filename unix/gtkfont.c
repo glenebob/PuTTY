@@ -634,7 +634,7 @@ static void x11font_cairo_cache_glyph(x11font_individual *xfi, int glyphindex)
          * principle that Unicode characters come in contiguous blocks
          * often used together */
         int old_nglyphs = xfi->nglyphs;
-        xfi->nglyphs = (glyphindex + 0xFF) & ~0xFF;
+        xfi->nglyphs = (glyphindex + 0x100) & ~0xFF;
         xfi->glyphcache = sresize(xfi->glyphcache, xfi->nglyphs,
                                   struct cairo_cached_glyph);
 
@@ -1137,6 +1137,13 @@ struct pangofont {
      * Data passed in to unifont_create().
      */
     int bold, shadowoffset, shadowalways;
+    /*
+     * Cache of character widths, indexed by Unicode code point. In
+     * pixels; -1 means we haven't asked Pango about this character
+     * before.
+     */
+    int *widthcache;
+    unsigned nwidthcache;
 };
 
 static const struct unifont_vtable pangofont_vtable = {
@@ -1260,6 +1267,8 @@ static unifont *pangofont_create_internal(GtkWidget *widget,
     pfont->bold = bold;
     pfont->shadowoffset = shadowoffset;
     pfont->shadowalways = shadowalways;
+    pfont->widthcache = NULL;
+    pfont->nwidthcache = 0;
 
     pango_font_metrics_unref(metrics);
 
@@ -1313,8 +1322,38 @@ static void pangofont_destroy(unifont *font)
 {
     struct pangofont *pfont = (struct pangofont *)font;
     pango_font_description_free(pfont->desc);
+    sfree(pfont->widthcache);
     g_object_unref(pfont->fset);
     sfree(font);
+}
+
+static int pangofont_char_width(PangoLayout *layout, struct pangofont *pfont,
+                                wchar_t uchr, const char *utfchr, int utflen)
+{
+    /*
+     * Here we check whether a character has the same width as the
+     * character cell it'll be drawn in. Because profiling showed that
+     * pango_layout_get_pixel_extents() was a huge bottleneck when we
+     * were calling it every time we needed to know this, we instead
+     * call it only on characters we don't already know about, and
+     * cache the results.
+     */
+
+    if ((unsigned)uchr >= pfont->nwidthcache) {
+        unsigned newsize = ((int)uchr + 0x100) & ~0xFF;
+        pfont->widthcache = sresize(pfont->widthcache, newsize, int);
+        while (pfont->nwidthcache < newsize)
+            pfont->widthcache[pfont->nwidthcache++] = -1;
+    }
+
+    if (pfont->widthcache[uchr] < 0) {
+        PangoRectangle rect;
+        pango_layout_set_text(layout, utfchr, utflen);
+        pango_layout_get_pixel_extents(layout, NULL, &rect);
+        pfont->widthcache[uchr] = rect.width;
+    }
+
+    return pfont->widthcache[uchr];
 }
 
 static int pangofont_has_glyph(unifont *font, wchar_t glyph)
@@ -1429,39 +1468,34 @@ static void pangofont_draw_text(unifont_drawctx *ctx, unifont *font,
 	    clen++;
 	n = 1;
 
-        /*
-         * If it's a right-to-left character, we must display it on
-         * its own, to stop Pango helpfully re-reversing our already
-         * reversed text.
-         */
-        if (!is_rtl(string[0])) {
-
+        if (is_rtl(string[0]) ||
+            pangofont_char_width(layout, pfont, string[n-1],
+                                 utfptr, clen) != cellwidth) {
             /*
-             * See if that character has the width we expect.
+             * If this character is a right-to-left one, or has an
+             * unusual width, then we must display it on its own.
              */
-            pango_layout_set_text(layout, utfptr, clen);
-            pango_layout_get_pixel_extents(layout, NULL, &rect);
-
-            if (rect.width == cellwidth) {
-                /*
-                 * Try extracting more characters, for as long as they
-                 * stay well-behaved.
-                 */
-                while (clen < utflen) {
-                    int oldclen = clen;
-                    clen++;		       /* skip UTF-8 introducer byte */
-                    while (clen < utflen &&
-                           (unsigned char)utfptr[clen] >= 0x80 &&
-                           (unsigned char)utfptr[clen] < 0xC0)
-                        clen++;
-                    n++;
-                    pango_layout_set_text(layout, utfptr, clen);
-                    pango_layout_get_pixel_extents(layout, NULL, &rect);
-                    if (rect.width != n * cellwidth) {
-                        clen = oldclen;
-                        n--;
-                        break;
-                    }
+        } else {
+            /*
+             * Try to amalgamate a contiguous string of characters
+             * with the expected sensible width, for the common case
+             * in which we're using a monospaced font and everything
+             * works as expected.
+             */
+            while (clen < utflen) {
+                int oldclen = clen;
+                clen++;		       /* skip UTF-8 introducer byte */
+                while (clen < utflen &&
+                       (unsigned char)utfptr[clen] >= 0x80 &&
+                       (unsigned char)utfptr[clen] < 0xC0)
+                    clen++;
+                n++;
+                if (pangofont_char_width(layout, pfont,
+                                         string[n-1], utfptr + oldclen,
+                                         clen - oldclen) != cellwidth) {
+                    clen = oldclen;
+                    n--;
+                    break;
                 }
             }
         }
@@ -2924,8 +2958,7 @@ static gint unifontsel_configure_area(GtkWidget *widget,
     return TRUE;
 }
 
-static void get_label_text_dimensions(const char *text,
-                                      int *width, int *height)
+void get_label_text_dimensions(const char *text, int *width, int *height)
 {
     /*
      * Determine the dimensions of a piece of text in the standard
@@ -2942,13 +2975,17 @@ static void get_label_text_dimensions(const char *text,
     PangoLayout *layout = gtk_label_get_layout(GTK_LABEL(label));
     PangoRectangle logrect;
     pango_layout_get_extents(layout, NULL, &logrect);
-    *width = logrect.width / PANGO_SCALE;
-    *height = logrect.height / PANGO_SCALE;
+    if (width)
+        *width = logrect.width / PANGO_SCALE;
+    if (height)
+        *height = logrect.height / PANGO_SCALE;
 #else
     GtkRequisition req;
     gtk_widget_size_request(label, &req);
-    *width = req.width;
-    *height = req.height;
+    if (width)
+        *width = req.width;
+    if (height)
+        *height = req.height;
 #endif
 
     g_object_ref_sink(G_OBJECT(label));

@@ -42,9 +42,11 @@ struct ColumnsChild_tag {
     GtkWidget *widget;
     gint colstart, colspan;
     gboolean force_left;	       /* for recalcitrant GtkLabels */
+    ColumnsChild *same_height_as;
     /* Otherwise, this entry represents a change in the column setup. */
     gint ncols;
     gint *percentages;
+    gint x, y, w, h;           /* used during an individual size computation */
 };
 
 GType columns_get_type(void);
@@ -54,6 +56,7 @@ void columns_add(Columns *cols, GtkWidget *child,
                  gint colstart, gint colspan);
 void columns_taborder_last(Columns *cols, GtkWidget *child);
 void columns_force_left_align(Columns *cols, GtkWidget *child);
+void columns_force_same_height(Columns *cols, GtkWidget *ch1, GtkWidget *ch2);
 
 #ifdef __cplusplus
 }

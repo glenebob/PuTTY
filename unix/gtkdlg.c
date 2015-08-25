@@ -1851,6 +1851,7 @@ static void filefont_clicked(GtkButton *button, gpointer data)
     }
 }
 
+#if !GTK_CHECK_VERSION(3,0,0)
 static void label_sizealloc(GtkWidget *widget, GtkAllocation *alloc,
 			    gpointer data)
 {
@@ -1861,6 +1862,7 @@ static void label_sizealloc(GtkWidget *widget, GtkAllocation *alloc,
     gtk_label_set_text(GTK_LABEL(uc->text), uc->ctrl->generic.label);
     g_signal_handler_disconnect(G_OBJECT(uc->text), uc->textsig);
 }
+#endif
 
 /* ----------------------------------------------------------------------
  * This function does the main layout work: it reads a controlset,
@@ -2038,7 +2040,6 @@ GtkWidget *layout_ctrls(struct dlgparam *dp, struct Shortcuts *scs,
             break;
           case CTRL_EDITBOX:
 	    {
-                GtkRequisition req;
 		GtkWidget *signalobject;
 
 		if (ctrl->editbox.has_list) {
@@ -2083,13 +2084,6 @@ GtkWidget *layout_ctrls(struct dlgparam *dp, struct Shortcuts *scs,
                 g_signal_connect(G_OBJECT(signalobject), "focus_out_event",
                                  G_CALLBACK(editbox_lostfocus), dp);
 
-                /*
-                 * Find out the edit box's height, which we'll need
-                 * for vertical centring below (and, in GTK2, size
-                 * tweaking as well).
-                 */
-                gtk_widget_size_request(w, &req);
-
 #if !GTK_CHECK_VERSION(3,0,0)
 		/*
 		 * Edit boxes, for some strange reason, have a minimum
@@ -2097,7 +2091,11 @@ GtkWidget *layout_ctrls(struct dlgparam *dp, struct Shortcuts *scs,
 		 * rather the edit boxes acquired their natural width
 		 * from the column layout of the rest of the box.
 		 */
-                gtk_widget_set_size_request(w, 10, req.height);
+                {
+                    GtkRequisition req;
+                    gtk_widget_size_request(w, &req);
+                    gtk_widget_set_size_request(w, 10, req.height);
+                }
 #else
                 /*
                  * In GTK 3, this is still true, but there's a special
@@ -2128,9 +2126,8 @@ GtkWidget *layout_ctrls(struct dlgparam *dp, struct Shortcuts *scs,
 			columns_add(COLUMNS(container), label, 0, 1);
 			columns_force_left_align(COLUMNS(container), label);
 			columns_add(COLUMNS(container), w, 1, 1);
-			/* Centre the label vertically. */
-			gtk_widget_set_size_request(label, -1, req.height);
-			gtk_misc_set_alignment(GTK_MISC(label), 0.0, 0.5);
+                        columns_force_same_height(COLUMNS(container),
+                                                  label, w);
 		    }
 		    gtk_widget_show(label);
 		    gtk_widget_show(w);
@@ -2144,7 +2141,6 @@ GtkWidget *layout_ctrls(struct dlgparam *dp, struct Shortcuts *scs,
           case CTRL_FONTSELECT:
             {
                 GtkWidget *ww;
-                GtkRequisition req;
                 const char *browsebtn =
                     (ctrl->generic.type == CTRL_FILESELECT ?
                      "Browse..." : "Change...");
@@ -2167,14 +2163,23 @@ GtkWidget *layout_ctrls(struct dlgparam *dp, struct Shortcuts *scs,
                 }
 
                 uc->entry = ww = gtk_entry_new();
-                gtk_widget_size_request(ww, &req);
-                gtk_widget_set_size_request(ww, 10, req.height);
+#if !GTK_CHECK_VERSION(3,0,0)
+                {
+                    GtkRequisition req;
+                    gtk_widget_size_request(ww, &req);
+                    gtk_widget_set_size_request(ww, 10, req.height);
+                }
+#else
+                gtk_entry_set_width_chars(GTK_ENTRY(ww), 1);
+#endif
                 columns_add(COLUMNS(w), ww, 0, 1);
                 gtk_widget_show(ww);
 
                 uc->button = ww = gtk_button_new_with_label(browsebtn);
                 columns_add(COLUMNS(w), ww, 1, 1);
                 gtk_widget_show(ww);
+
+                columns_force_same_height(COLUMNS(w), uc->entry, uc->button);
 
                 g_signal_connect(G_OBJECT(uc->entry), "key_press_event",
                                  G_CALLBACK(editbox_key), dp);
@@ -2433,9 +2438,9 @@ GtkWidget *layout_ctrls(struct dlgparam *dp, struct Shortcuts *scs,
 
 	    if (ctrl->generic.label) {
 		GtkWidget *label, *container;
-                GtkRequisition req;
 
 		label = gtk_label_new(ctrl->generic.label);
+                gtk_label_set_width_chars(GTK_LABEL(label), 3);
 
 		shortcut_add(scs, label, ctrl->listbox.shortcut,
 			     SHORTCUT_FOCUS, w);
@@ -2453,10 +2458,8 @@ GtkWidget *layout_ctrls(struct dlgparam *dp, struct Shortcuts *scs,
 		    columns_add(COLUMNS(container), label, 0, 1);
 		    columns_force_left_align(COLUMNS(container), label);
 		    columns_add(COLUMNS(container), w, 1, 1);
-		    /* Centre the label vertically. */
-		    gtk_widget_size_request(w, &req);
-		    gtk_widget_set_size_request(label, -1, req.height);
-		    gtk_misc_set_alignment(GTK_MISC(label), 0.0, 0.5);
+                    columns_force_same_height(COLUMNS(container),
+                                              label, w);
 		}
 		gtk_widget_show(label);
 		gtk_widget_show(w);
@@ -2467,8 +2470,9 @@ GtkWidget *layout_ctrls(struct dlgparam *dp, struct Shortcuts *scs,
 
 	    break;
           case CTRL_TEXT:
+#if !GTK_CHECK_VERSION(3,0,0)
 	    /*
-	     * Wrapping text widgets don't sit well with the GTK
+	     * Wrapping text widgets don't sit well with the GTK2
 	     * layout model, in which widgets state a minimum size
 	     * and the whole window then adjusts to the smallest
 	     * size it can sensibly take given its contents. A
@@ -2493,11 +2497,20 @@ GtkWidget *layout_ctrls(struct dlgparam *dp, struct Shortcuts *scs,
 	     * than one line).
 	     */
             uc->text = w = gtk_label_new("X");
-            gtk_misc_set_alignment(GTK_MISC(w), 0.0, 0.0);
-            gtk_label_set_line_wrap(GTK_LABEL(w), TRUE);
 	    uc->textsig =
                 g_signal_connect(G_OBJECT(w), "size-allocate",
                                  G_CALLBACK(label_sizealloc), dp);
+#else
+            /*
+             * In GTK3, this is all fixed, because the main aim of the
+             * new 'height-for-width' geometry management is to make
+             * wrapping labels behave sensibly. So now we can just do
+             * the obvious thing.
+             */
+            uc->text = w = gtk_label_new(uc->ctrl->generic.label);
+#endif
+            gtk_misc_set_alignment(GTK_MISC(w), 0.0, 0.0);
+            gtk_label_set_line_wrap(GTK_LABEL(w), TRUE);
             break;
         }
 
@@ -3415,11 +3428,9 @@ int messagebox(GtkWidget *parentwin, const char *title, const char *msg,
 
 int string_width(const char *text)
 {
-    GtkWidget *label = gtk_label_new(text);
-    GtkRequisition req;
-    gtk_widget_size_request(label, &req);
-    g_object_ref_sink(G_OBJECT(label));
-    return req.width;
+    int ret;
+    get_label_text_dimensions(text, &ret, NULL);
+    return ret;
 }
 
 int reallyclose(void *frontend)
