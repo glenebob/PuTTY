@@ -109,11 +109,15 @@ void ldisc_configure(void *handle, Conf *conf)
     Ldisc ldisc = (Ldisc) handle;
 
     ldisc->telnet_keyboard = conf_get_int(conf, CONF_telnet_keyboard);
-    ldisc->telnet_newline = conf_get_int(conf, CONF_telnet_newline);
-    ldisc->serial_newline = conf_get_int(conf, CONF_serial_newline);
+    ldisc->newline = conf_get_int(conf, CONF_newline);
     ldisc->protocol = conf_get_int(conf, CONF_protocol);
     ldisc->localecho = conf_get_int(conf, CONF_localecho);
     ldisc->localedit = conf_get_int(conf, CONF_localedit);
+
+    if (ldisc->newline == NEWLINE_DEFAULT)
+    {
+	ldisc->newline = ldisc->back->default_newline;
+    }
 }
 
 void ldisc_free(void *handle)
@@ -292,12 +296,7 @@ void ldisc_send(void *handle, const char *buf, int len, int interactive)
 	      case KCTRL('M'):	       /* send with newline */
 		    if (ldisc->buflen > 0)
 			ldisc->back->send(ldisc->backhandle, ldisc->buf, ldisc->buflen);
-		    if (ldisc->protocol == PROT_RAW)
-			ldisc->back->send(ldisc->backhandle, "\r\n", 2);
-		    else if (ldisc->protocol == PROT_TELNET && ldisc->telnet_newline)
-			ldisc->back->special(ldisc->backhandle, TS_EOL);
-		    else
-			ldisc->back->send(ldisc->backhandle, "\r", 1);
+		    ldisc->back->newline(ldisc->back, ldisc->backhandle, ldisc->newline);
 		    if (ECHOING)
 			c_write(ldisc, "\r\n", 2);
 		    ldisc->buflen = 0;
@@ -330,59 +329,55 @@ void ldisc_send(void *handle, const char *buf, int len, int interactive)
 	    if (ECHOING)
 		c_write(ldisc, buf, len);
 	    if (keyflag && len == 1) {
-		switch (ldisc->protocol) {
-		  case PROT_TELNET :
+		if (buf[0] == CTRL('M')) {
 		    written = 1;
+		    ldisc->back->newline(ldisc->back, ldisc->backhandle, ldisc->newline);
+		}
+		else if (ldisc->protocol == PROT_TELNET) {
 		    switch (buf[0]) {
-		      case CTRL('M'):
-			if (ldisc->telnet_newline)
-			    ldisc->back->special(ldisc->backhandle, TS_EOL);
-			else
-			    ldisc->back->send(ldisc->backhandle, "\r", 1);
-			break;
 		      case CTRL('?'):
 		      case CTRL('H'):
 			if (ldisc->telnet_keyboard) {
+			    written = 1;
 			    ldisc->back->special(ldisc->backhandle, TS_EC);
 			    break;
 			}
 		      case CTRL('C'):
 			if (ldisc->telnet_keyboard) {
+			    written = 1;
 			    ldisc->back->special(ldisc->backhandle, TS_IP);
 				break;
 			    }
 		      case CTRL('Z'):
 			if (ldisc->telnet_keyboard) {
+			    written = 1;
 			    ldisc->back->special(ldisc->backhandle, TS_SUSP);
 			    break;
 			}
 		      default:
-			written = 0;
 			break;
 		      }
-		      break;
-		  case PROT_SERIAL:
-		    if (buf[0] == CTRL('M')) {
-			written = 1;
-			switch (ldisc->serial_newline) {
-			  case SER_NEWLINE_LF:
-			    ldisc->back->send(ldisc->backhandle, "\n", 1);
-			    break;
-			  case SER_NEWLINE_CRLF:
-			    ldisc->back->send(ldisc->backhandle, "\r\n", 2);
-			    break;
-			  default:
-			  case SER_NEWLINE_CR:
-			    ldisc->back->send(ldisc->backhandle, "\r", 1);
-			    break;
-			}
-		    }
-		    break;
 		}
 	    }
 	    if (!written) {
 		ldisc->back->send(ldisc->backhandle, buf, len);
 	    }
 	}
+    }
+}
+
+void default_newline(Backend *back, void *handle, int newline_config)
+{
+    switch (newline_config) {
+      case NEWLINE_LF:
+	back->send(handle, "\n", 1);
+	break;
+      case NEWLINE_CRLF:
+	back->send(handle, "\r\n", 2);
+	break;
+      default:
+      case NEWLINE_CR:
+	back->send(handle, "\r", 1);
+	break;
     }
 }

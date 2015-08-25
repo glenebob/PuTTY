@@ -7,6 +7,7 @@
 #include <limits.h>
 
 #include "putty.h"
+#include "ldisc.h"
 
 #define SERIAL_MAX_BACKLOG 4096
 
@@ -17,6 +18,7 @@ typedef struct serial_backend_data {
     int bufsize;
     long clearbreak_time;
     int break_in_progress;
+    int newline_handling;
 } *Serial;
 
 static void serial_terminate(Serial serial)
@@ -444,6 +446,7 @@ Backend serial_backend = {
     serial_sendbuffer,
     serial_size,
     serial_special,
+    default_newline,
     serial_get_specials,
     serial_connected,
     serial_exitcode,
@@ -455,5 +458,6 @@ Backend serial_backend = {
     serial_cfg_info,
     "serial",
     PROT_SERIAL,
-    0
+    0,
+    NEWLINE_CR
 };

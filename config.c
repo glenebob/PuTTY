@@ -1573,6 +1573,12 @@ void setup_config_box(struct controlbox *b, int midsession,
 		      I(CONF_funky_type),
 		      "ESC[n~", I(0), "Linux", I(1), "Xterm R6", I(2),
 		      "VT400", I(3), "VT100+", I(4), "SCO", I(5), NULL);
+    ctrl_radiobuttons(s, "The Enter key", 'l', 4,
+		      HELPCTX(keyboard_newline),
+		      conf_radiobutton_handler,
+		      I(CONF_newline),
+		      "Default", I(NEWLINE_DEFAULT), "CR", I(NEWLINE_CR),
+		      "LF", I(NEWLINE_LF), "CR/LF", I(NEWLINE_CRLF), NULL);
 
     s = ctrl_getset(b, "Terminal/Keyboard", "appkeypad",
 		    "Application keypad settings:");
@@ -2106,10 +2112,6 @@ void setup_config_box(struct controlbox *b, int midsession,
 		      HELPCTX(telnet_specialkeys),
 		      conf_checkbox_handler,
 		      I(CONF_telnet_keyboard));
-	ctrl_checkbox(s, "Return key sends Telnet New Line instead of ^M",
-		      'm', HELPCTX(telnet_newline),
-		      conf_checkbox_handler,
-		      I(CONF_telnet_newline));
     }
 
     if (!midsession) {

@@ -17,11 +17,17 @@ typedef struct ldisc_tag {
     /*
      * Values cached out of conf.
      */
-    int telnet_keyboard, telnet_newline, protocol, localecho, localedit;
-    int serial_newline;
+    int telnet_keyboard, newline, protocol, localecho, localedit;
 
     char *buf;
     int buflen, bufsiz, quotenext;
 } *Ldisc;
+
+/*
+ * Handle new line character from the terminal in the "normal" way,
+ * as apposed to the Telnet way. The telnet backend implements its
+ * own version of this function.
+ */
+void default_newline(Backend *back, void *handle, int newline_config);
 
 #endif /* PUTTY_LDISC_H */

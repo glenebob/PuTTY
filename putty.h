@@ -170,7 +170,6 @@ typedef enum {
      * been re-used for similar specials in other protocols. */
     TS_AYT, TS_BRK, TS_SYNCH, TS_EC, TS_EL, TS_GA, TS_NOP, TS_ABORT,
     TS_AO, TS_IP, TS_SUSP, TS_EOR, TS_EOF, TS_LECHO, TS_RECHO, TS_PING,
-    TS_EOL,
     /* Special command for SSH. */
     TS_REKEY,
     /* POSIX-style signals. (not Telnet) */
@@ -329,7 +328,7 @@ enum {
 };
 
 enum {
-    SER_NEWLINE_CR, SER_NEWLINE_LF, SER_NEWLINE_CRLF
+    NEWLINE_DEFAULT, NEWLINE_CR, NEWLINE_LF, NEWLINE_CRLF
 };
 
 enum {
@@ -432,6 +431,7 @@ struct backend_tag {
     int (*sendbuffer) (void *handle);
     void (*size) (void *handle, int width, int height);
     void (*special) (void *handle, Telnet_Special code);
+    void (*newline) (Backend *back, void *handle, int newline_config);
     const struct telnet_special *(*get_specials) (void *handle);
     int (*connected) (void *handle);
     int (*exitcode) (void *handle);
@@ -450,6 +450,7 @@ struct backend_tag {
     const char *name;
     int protocol;
     int default_port;
+    int default_newline;
 };
 
 extern Backend *backends[];
@@ -742,8 +743,7 @@ void cleanup_exit(int);
     X(INT, NONE, app_keypad) \
     X(INT, NONE, nethack_keypad) \
     X(INT, NONE, telnet_keyboard) \
-    X(INT, NONE, telnet_newline) \
-    X(INT, NONE, serial_newline) \
+    X(INT, NONE, newline) \
     X(INT, NONE, alt_f4) /* is it special? */ \
     X(INT, NONE, alt_space) /* is it special? */ \
     X(INT, NONE, alt_only) /* is it special? */ \
@@ -1117,7 +1117,7 @@ char const *conf_dest(Conf *conf);
  * Exports from sercfg.c.
  */
 void ser_setup_config_box(struct controlbox *b, int midsession,
-			  int parity_mask, int flow_mask, int lineterm_mask);
+			  int parity_mask, int flow_mask);
 
 /*
  * Exports from version.c.

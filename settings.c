@@ -532,8 +532,7 @@ void save_open_settings(void *sesskey, Conf *conf)
     write_setting_i(sesskey, "ComposeKey", conf_get_int(conf, CONF_compose_key));
     write_setting_i(sesskey, "CtrlAltKeys", conf_get_int(conf, CONF_ctrlaltkeys));
     write_setting_i(sesskey, "TelnetKey", conf_get_int(conf, CONF_telnet_keyboard));
-    write_setting_i(sesskey, "TelnetRet", conf_get_int(conf, CONF_telnet_newline));
-    write_setting_i(sesskey, "SerialRet", conf_get_int(conf, CONF_serial_newline));
+    write_setting_i(sesskey, "NewLine", conf_get_int(conf, CONF_newline));
     write_setting_i(sesskey, "LocalEcho", conf_get_int(conf, CONF_localecho));
     write_setting_i(sesskey, "LocalEdit", conf_get_int(conf, CONF_localedit));
     write_setting_s(sesskey, "Answerback", conf_get_str(conf, CONF_answerback));
@@ -692,13 +691,14 @@ void load_open_settings(void *sesskey, Conf *conf)
     prot = gpps_raw(sesskey, "Protocol", "default");
     conf_set_int(conf, CONF_protocol, default_protocol);
     conf_set_int(conf, CONF_port, default_port);
-    {
-	const Backend *b = backend_from_name(prot);
-	if (b) {
-	    conf_set_int(conf, CONF_protocol, b->protocol);
-	    gppi(sesskey, "PortNumber", default_port, conf, CONF_port);
-	}
+
+    const Backend *backend = backend_from_name(prot);
+
+    if (backend) {
+	conf_set_int(conf, CONF_protocol, backend->protocol);
+	gppi(sesskey, "PortNumber", default_port, conf, CONF_port);
     }
+
     sfree(prot);
 
     /* Address family selection */
@@ -835,8 +835,18 @@ void load_open_settings(void *sesskey, Conf *conf)
     gppi(sesskey, "ComposeKey", 0, conf, CONF_compose_key);
     gppi(sesskey, "CtrlAltKeys", 1, conf, CONF_ctrlaltkeys);
     gppi(sesskey, "TelnetKey", 0, conf, CONF_telnet_keyboard);
-    gppi(sesskey, "TelnetRet", 1, conf, CONF_telnet_newline);
-    gppi(sesskey, "SerialRet", SER_NEWLINE_CR, conf, CONF_serial_newline);
+    gppi(sesskey, "NewLine", NEWLINE_DEFAULT, conf, CONF_newline);
+
+    if (backend && backend->protocol == PROT_TELNET) {
+	/*
+	* Migrate the old telnet newline config option to the new global one.
+	*/
+	if (conf_get_int(conf, CONF_newline) == NEWLINE_DEFAULT && gppi_raw(sesskey, "TelnetRet", 1) == 0)
+	{
+	    conf_set_int(conf, CONF_newline, NEWLINE_CR);
+	}
+    }
+
     gppi(sesskey, "LocalEcho", AUTO, conf, CONF_localecho);
     gppi(sesskey, "LocalEdit", AUTO, conf, CONF_localedit);
     gpps(sesskey, "Answerback", "PuTTY", conf, CONF_answerback);

@@ -617,6 +617,23 @@ to \c{ESC [v}, and with shift and control together they generate
 If you don't know what any of this means, you probably don't need to
 fiddle with it.
 
+\S{config-newline} Selecting line termination style
+
+\cfg{winhelp-topic}{keyboard.newline}
+
+The \q{Line termination} box allows you to choose the style of line
+termination used when the Enter key is pressed.
+
+\b \q{Default}: Use the default line termination specific to the connection
+protocol. For Telnet and Raw, the default is CR/LF. For all others, the
+default is CR.
+
+\b \q{CR}: The Carriage Return character is sent.
+
+\b \q{LF}: The Line Feed character is sent.
+
+\b \q{CR/LF}: Both the Carriage Return and Line Feed characters are sent.
+
 \S{config-appcursor} Controlling \i{Application Cursor Keys} mode
 
 \cfg{winhelp-topic}{keyboard.appcursor}
@@ -2164,22 +2181,6 @@ special command}Suspend Process code.
 You probably shouldn't enable this
 unless you know what you're doing.
 
-\S{config-telnetnl} \q{Return key sends \i{Telnet New Line} instead of ^M}
-
-\cfg{winhelp-topic}{telnet.newline}
-
-Unlike most other remote login protocols, the Telnet protocol has a
-special \q{\i{new line}} code that is not the same as the usual line
-endings of Control-M or Control-J. By default, PuTTY sends the
-Telnet New Line code when you press Return, instead of sending
-Control-M as it does in most other protocols.
-
-Most Unix-style Telnet servers don't mind whether they receive
-Telnet New Line or Control-M; some servers do expect New Line, and
-some servers prefer to see ^M. If you are seeing surprising
-behaviour when you press Return in a Telnet session, you might try
-turning this option off to see if it helps.
-
 \H{config-rlogin} The Rlogin panel
 
 The \i{Rlogin} panel allows you to configure options that only apply to
@@ -3497,19 +3498,6 @@ the serial line.
 
 \b \q{DSR/DTR}: flow control is done using the DSR and DTR wires on
 the serial line.
-
-\S{config-serial-newline} Selecting line termination style
-
-\cfg{winhelp-topic}{serial.newline}
-
-The \q{Line termination} box allows you to choose the style of line
-termination used for the serial line.
-
-\b \q{CR}: The Carriage Return character is sent.
-
-\b \q{LF}: The Line Feed character is sent.
-
-\b \q{CR/LF}: Both the Carriage Return and Line Feed characters are sent.
 
 \H{config-file} \ii{Storing configuration in a file}
 

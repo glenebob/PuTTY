@@ -16,6 +16,7 @@
 #include "sshgssc.h"
 #include "sshgss.h"
 #endif
+#include "ldisc.h"
 
 #ifndef FALSE
 #define FALSE 0
@@ -11617,6 +11618,7 @@ Backend ssh_backend = {
     ssh_sendbuffer,
     ssh_size,
     ssh_special,
+    default_newline,
     ssh_get_specials,
     ssh_connected,
     ssh_return_exitcode,
@@ -11628,5 +11630,6 @@ Backend ssh_backend = {
     ssh_cfg_info,
     "ssh",
     PROT_SSH,
-    22
+    22,
+    NEWLINE_CR
 };

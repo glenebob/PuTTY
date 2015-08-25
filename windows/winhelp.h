@@ -28,6 +28,7 @@
 #define WINHELP_CTX_keyboard_backspace "keyboard.backspace:config-backspace"
 #define WINHELP_CTX_keyboard_homeend "keyboard.homeend:config-homeend"
 #define WINHELP_CTX_keyboard_funkeys "keyboard.funkeys:config-funkeys"
+#define WINHELP_CTX_keyboard_newline "keyboard.newline:config-newline"
 #define WINHELP_CTX_keyboard_appkeypad "keyboard.appkeypad:config-appkeypad"
 #define WINHELP_CTX_keyboard_appcursor "keyboard.appcursor:config-appcursor"
 #define WINHELP_CTX_keyboard_nethack "keyboard.nethack:config-nethack"
@@ -155,7 +156,6 @@
 #define WINHELP_CTX_serial_stopbits "serial.stopbits:config-serial-stopbits"
 #define WINHELP_CTX_serial_parity "serial.parity:config-serial-parity"
 #define WINHELP_CTX_serial_flow "serial.flow:config-serial-flow"
-#define WINHELP_CTX_serial_newline "serial.newline:config-serial-newline"
 
 #define WINHELP_CTX_pageant_general "pageant.general:pageant"
 #define WINHELP_CTX_pageant_keylist "pageant.keylist:pageant-mainwin-keylist"

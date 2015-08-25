@@ -7,6 +7,7 @@
 #include <limits.h>
 
 #include "putty.h"
+#include "ldisc.h"
 
 #ifndef FALSE
 #define FALSE 0
@@ -330,6 +331,7 @@ Backend raw_backend = {
     raw_sendbuffer,
     raw_size,
     raw_special,
+    default_newline,
     raw_get_specials,
     raw_connected,
     raw_exitcode,
@@ -341,5 +343,6 @@ Backend raw_backend = {
     raw_cfg_info,
     "raw",
     PROT_RAW,
-    0
+    0,
+    NEWLINE_CRLF
 };

@@ -993,14 +993,6 @@ static void telnet_special(void *handle, Telnet_Special code)
 	b[1] = xEOF;
 	telnet->bufsize = sk_write(telnet->s, (char *)b, 2);
 	break;
-      case TS_EOL:
-	/* In BINARY mode, CR-LF becomes just CR -
-	 * and without the NUL suffix too. */
-	if (telnet->opt_states[o_we_bin.index] == ACTIVE)
-	    telnet->bufsize = sk_write(telnet->s, "\r", 1);
-	else
-	    telnet->bufsize = sk_write(telnet->s, "\r\n", 2);
-	break;
       case TS_SYNCH:
 	b[1] = DM;
 	telnet->bufsize = sk_write(telnet->s, (char *)b, 1);
@@ -1027,6 +1019,29 @@ static void telnet_special(void *handle, Telnet_Special code)
 	break;
       default:
 	break;	/* never heard of it */
+    }
+}
+
+void telnet_newline(Backend *back, void *handle, int newline_config)
+{
+    Telnet telnet = (Telnet)handle;
+
+    switch (newline_config) {
+      case NEWLINE_LF:
+        back->send(handle, "\n", 1);
+	break;
+      case NEWLINE_CR:
+	back->send(handle, "\r\0", 2);
+	break;
+      default:
+      case NEWLINE_CRLF:
+	/* In BINARY mode, CR-LF becomes just CR -
+	 * and without the NUL suffix too. */
+	if (telnet->opt_states[o_we_bin.index] == ACTIVE)
+	    telnet->bufsize = sk_write(telnet->s, "\r", 1);
+	else
+	    telnet->bufsize = sk_write(telnet->s, "\r\n", 2);
+	break;
     }
 }
 
@@ -1120,6 +1135,7 @@ Backend telnet_backend = {
     telnet_sendbuffer,
     telnet_size,
     telnet_special,
+    telnet_newline,
     telnet_get_specials,
     telnet_connected,
     telnet_exitcode,
@@ -1131,5 +1147,6 @@ Backend telnet_backend = {
     telnet_cfg_info,
     "telnet",
     PROT_TELNET,
-    23
+    23,
+    NEWLINE_CRLF
 };

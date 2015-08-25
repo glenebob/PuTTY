@@ -8,6 +8,7 @@
 #include <ctype.h>
 
 #include "putty.h"
+#include "ldisc.h"
 
 #ifndef FALSE
 #define FALSE 0
@@ -416,6 +417,7 @@ Backend rlogin_backend = {
     rlogin_sendbuffer,
     rlogin_size,
     rlogin_special,
+    default_newline,
     rlogin_get_specials,
     rlogin_connected,
     rlogin_exitcode,
@@ -427,5 +429,6 @@ Backend rlogin_backend = {
     rlogin_cfg_info,
     "rlogin",
     PROT_RLOGIN,
-    513
+    513,
+    NEWLINE_CR
 };
