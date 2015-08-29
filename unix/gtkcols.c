@@ -588,6 +588,10 @@ static gint columns_compute_width(Columns *cols, widget_dim_fn_t get_width)
     const gint *percentages;
     static const gint onecol[] = { 100 };
 
+#ifdef COLUMNS_WIDTH_DIAGNOSTICS
+    printf("compute_width(%p): start\n", cols);
+#endif
+
     retwidth = 0;
 
     ncols = 1;
@@ -610,6 +614,23 @@ static gint columns_compute_width(Columns *cols, widget_dim_fn_t get_width)
 
         childwidth = get_width(child);
 	colspan = child->colspan ? child->colspan : ncols-child->colstart;
+
+#ifdef COLUMNS_WIDTH_DIAGNOSTICS
+        printf("compute_width(%p): ", cols);
+        if (GTK_IS_LABEL(child->widget))
+            printf("label %p '%s' wrap=%s: ", child->widget,
+                   gtk_label_get_text(GTK_LABEL(child->widget)),
+                   (gtk_label_get_line_wrap(GTK_LABEL(child->widget))
+                    ? "TRUE" : "FALSE"));
+        else
+            printf("widget %p: ", child->widget);
+        {
+            gint min, nat;
+            gtk_widget_get_preferred_width(child->widget, &min, &nat);
+            printf("minwidth=%d natwidth=%d ", min, nat);
+        }
+        printf("thiswidth=%d span=%d\n", childwidth, colspan);
+#endif
 
         /*
          * To compute width: we know that childwidth + cols->spacing
@@ -635,6 +656,10 @@ static gint columns_compute_width(Columns *cols, widget_dim_fn_t get_width)
              * before dividing by percent.
              */
             fullwid = (thiswid * 100 + percent - 1) / percent;
+#ifdef COLUMNS_WIDTH_DIAGNOSTICS
+            printf("compute_width(%p): after %p, thiswid=%d fullwid=%d\n",
+                   cols, child->widget, thiswid, fullwid);
+#endif
 
             /*
              * The above calculation assumes every widget gets
@@ -648,6 +673,10 @@ static gint columns_compute_width(Columns *cols, widget_dim_fn_t get_width)
     }
 
     retwidth += 2*gtk_container_get_border_width(GTK_CONTAINER(cols));
+
+#ifdef COLUMNS_WIDTH_DIAGNOSTICS
+    printf("compute_width(%p): done, returning %d\n", cols, retwidth);
+#endif
 
     return retwidth;
 }
@@ -951,14 +980,19 @@ static gint columns_gtk3_get_nat_width(ColumnsChild *child)
 {
     gint ret;
 
-    if (GTK_IS_LABEL(child->widget) &&
-        gtk_label_get_line_wrap(GTK_LABEL(child->widget))) {
+    if ((GTK_IS_LABEL(child->widget) &&
+         gtk_label_get_line_wrap(GTK_LABEL(child->widget))) ||
+        GTK_IS_ENTRY(child->widget)) {
         /*
          * We treat wrapping GtkLabels as a special case in this
          * layout class, because the whole point of those is that I
          * _don't_ want them to take up extra horizontal space for
          * long text, but instead to wrap it to whatever size is used
          * by the rest of the layout.
+         *
+         * GtkEntry gets similar treatment, because in OS X GTK I've
+         * found that it requests a natural width regardless of the
+         * output of gtk_entry_set_width_chars.
          */
         gtk_widget_get_preferred_width(child->widget, &ret, NULL);
     } else {
