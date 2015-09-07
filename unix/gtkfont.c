@@ -12,21 +12,26 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include <gtk/gtk.h>
 #if !GTK_CHECK_VERSION(3,0,0)
 #include <gdk/gdkkeysyms.h>
 #endif
+
+#define MAY_REFER_TO_GTK_IN_HEADERS
+
+#include "putty.h"
+#include "gtkfont.h"
+#include "gtkcompat.h"
+#include "gtkmisc.h"
+#include "tree234.h"
+
 #ifndef NOT_X_WINDOWS
 #include <gdk/gdkx.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #endif
-
-#include "putty.h"
-#include "gtkfont.h"
-#include "gtkcompat.h"
-#include "tree234.h"
 
 /*
  * Future work:
@@ -1333,10 +1338,10 @@ static int pangofont_char_width(PangoLayout *layout, struct pangofont *pfont,
     /*
      * Here we check whether a character has the same width as the
      * character cell it'll be drawn in. Because profiling showed that
-     * pango_layout_get_pixel_extents() was a huge bottleneck when we
-     * were calling it every time we needed to know this, we instead
-     * call it only on characters we don't already know about, and
-     * cache the results.
+     * asking Pango for text sizes was a huge bottleneck when we were
+     * calling it every time we needed to know this, we instead call
+     * it only on characters we don't already know about, and cache
+     * the results.
      */
 
     if ((unsigned)uchr >= pfont->nwidthcache) {
@@ -1349,7 +1354,7 @@ static int pangofont_char_width(PangoLayout *layout, struct pangofont *pfont,
     if (pfont->widthcache[uchr] < 0) {
         PangoRectangle rect;
         pango_layout_set_text(layout, utfchr, utflen);
-        pango_layout_get_pixel_extents(layout, NULL, &rect);
+        pango_layout_get_extents(layout, NULL, &rect);
         pfont->widthcache[uchr] = rect.width;
     }
 
@@ -1432,6 +1437,7 @@ static void pangofont_draw_text(unifont_drawctx *ctx, unifont *font,
     utfptr = utfstring;
     while (utflen > 0) {
 	int clen, n;
+        int desired = cellwidth * PANGO_SCALE;
 
 	/*
 	 * We want to display every character from this string in
@@ -1470,7 +1476,7 @@ static void pangofont_draw_text(unifont_drawctx *ctx, unifont *font,
 
         if (is_rtl(string[0]) ||
             pangofont_char_width(layout, pfont, string[n-1],
-                                 utfptr, clen) != cellwidth) {
+                                 utfptr, clen) != desired) {
             /*
              * If this character is a right-to-left one, or has an
              * unusual width, then we must display it on its own.
@@ -1492,7 +1498,7 @@ static void pangofont_draw_text(unifont_drawctx *ctx, unifont *font,
                 n++;
                 if (pangofont_char_width(layout, pfont,
                                          string[n-1], utfptr + oldclen,
-                                         clen - oldclen) != cellwidth) {
+                                         clen - oldclen) != desired) {
                     clen = oldclen;
                     n--;
                     break;
@@ -1986,46 +1992,6 @@ static void multifont_draw_text(unifont_drawctx *ctx, unifont *font, int x,
         len -= i;
         x += i * cellwidth;
     }
-}
-
-/* ----------------------------------------------------------------------
- * Utility routine used by the code below, and also gtkdlg.c.
- */
-
-void get_label_text_dimensions(const char *text, int *width, int *height)
-{
-    /*
-     * Determine the dimensions of a piece of text in the standard
-     * font used in GTK interface elements like labels. We do this by
-     * instantiating an actual GtkLabel, and then querying its size.
-     *
-     * But GTK2 and GTK3 require us to query the size completely
-     * differently. I'm sure there ought to be an easier approach than
-     * the way I'm doing this in GTK3, too!
-     */
-    GtkWidget *label = gtk_label_new(text);
-
-#if GTK_CHECK_VERSION(3,0,0)
-    PangoLayout *layout = gtk_label_get_layout(GTK_LABEL(label));
-    PangoRectangle logrect;
-    pango_layout_get_extents(layout, NULL, &logrect);
-    if (width)
-        *width = logrect.width / PANGO_SCALE;
-    if (height)
-        *height = logrect.height / PANGO_SCALE;
-#else
-    GtkRequisition req;
-    gtk_widget_size_request(label, &req);
-    if (width)
-        *width = req.width;
-    if (height)
-        *height = req.height;
-#endif
-
-    g_object_ref_sink(G_OBJECT(label));
-#if GTK_CHECK_VERSION(2,10,0)
-    g_object_unref(label);
-#endif
 }
 
 #if GTK_CHECK_VERSION(2,0,0)
@@ -3054,22 +3020,30 @@ unifontsel *unifontsel_new(const char *wintitle)
     gtk_table_set_col_spacings(GTK_TABLE(table), 8);
 #endif
     gtk_widget_show(table);
-#if GTK_CHECK_VERSION(2,4,0)
+
+#if GTK_CHECK_VERSION(3,0,0)
+    /* GtkAlignment has become deprecated and we use the "margin"
+     * property */
+    w = table;
+    g_object_set(G_OBJECT(w), "margin", 8, (const char *)NULL);
+#elif GTK_CHECK_VERSION(2,4,0)
     /* GtkAlignment seems to be the simplest way to put padding round things */
     w = gtk_alignment_new(0, 0, 1, 1);
     gtk_alignment_set_padding(GTK_ALIGNMENT(w), 8, 8, 8, 8);
     gtk_container_add(GTK_CONTAINER(w), table);
     gtk_widget_show(w);
 #else
+    /* In GTK < 2.4, even that isn't available */
     w = table;
 #endif
+
     gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area
                                (GTK_DIALOG(fs->u.window))),
 		       w, TRUE, TRUE, 0);
 
     label = gtk_label_new_with_mnemonic("_Font:");
     gtk_widget_show(label);
-    gtk_misc_set_alignment(GTK_MISC(label), 0.0, 0.0);
+    align_label_left(GTK_LABEL(label));
 #if GTK_CHECK_VERSION(3,0,0)
     gtk_grid_attach(GTK_GRID(table), label, 0, 0, 1, 1);
     g_object_set(G_OBJECT(label), "hexpand", TRUE, (const char *)NULL);
@@ -3117,7 +3091,7 @@ unifontsel *unifontsel_new(const char *wintitle)
 
     label = gtk_label_new_with_mnemonic("_Style:");
     gtk_widget_show(label);
-    gtk_misc_set_alignment(GTK_MISC(label), 0.0, 0.0);
+    align_label_left(GTK_LABEL(label));
 #if GTK_CHECK_VERSION(3,0,0)
     gtk_grid_attach(GTK_GRID(table), label, 1, 0, 1, 1);
     g_object_set(G_OBJECT(label), "hexpand", TRUE, (const char *)NULL);
@@ -3164,7 +3138,7 @@ unifontsel *unifontsel_new(const char *wintitle)
 
     label = gtk_label_new_with_mnemonic("Si_ze:");
     gtk_widget_show(label);
-    gtk_misc_set_alignment(GTK_MISC(label), 0.0, 0.0);
+    align_label_left(GTK_LABEL(label));
 #if GTK_CHECK_VERSION(3,0,0)
     gtk_grid_attach(GTK_GRID(table), label, 2, 0, 1, 1);
     g_object_set(G_OBJECT(label), "hexpand", TRUE, (const char *)NULL);
@@ -3252,7 +3226,12 @@ unifontsel *unifontsel_new(const char *wintitle)
     w = gtk_frame_new(NULL);
     gtk_container_add(GTK_CONTAINER(w), ww);
     gtk_widget_show(w);
-#if GTK_CHECK_VERSION(2,4,0)
+
+#if GTK_CHECK_VERSION(3,0,0)
+    /* GtkAlignment has become deprecated and we use the "margin"
+     * property */
+    g_object_set(G_OBJECT(w), "margin", 8, (const char *)NULL);
+#elif GTK_CHECK_VERSION(2,4,0)
     ww = w;
     /* GtkAlignment seems to be the simplest way to put padding round things */
     w = gtk_alignment_new(0, 0, 1, 1);
@@ -3260,6 +3239,7 @@ unifontsel *unifontsel_new(const char *wintitle)
     gtk_container_add(GTK_CONTAINER(w), ww);
     gtk_widget_show(w);
 #endif
+
     ww = w;
     w = gtk_frame_new("Preview of font");
     gtk_container_add(GTK_CONTAINER(w), ww);
@@ -3390,7 +3370,7 @@ void unifontsel_set_name(unifontsel *fontsel, const char *fontname)
      * Provide a default if given an empty or null font name.
      */
     if (!fontname || !*fontname)
-	fontname = "server:fixed";
+	fontname = DEFAULT_GTK_FONT;
 
     /*
      * Call the canonify_fontname function.

@@ -22,12 +22,6 @@
 #if !GTK_CHECK_VERSION(3,0,0)
 #include <gdk/gdkkeysyms.h>
 #endif
-#ifndef NOT_X_WINDOWS
-#include <gdk/gdkx.h>
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <X11/Xatom.h>
-#endif
 
 #if GTK_CHECK_VERSION(2,0,0)
 #include <gtk/gtkimmodule.h>
@@ -41,6 +35,14 @@
 #include "terminal.h"
 #include "gtkcompat.h"
 #include "gtkfont.h"
+#include "gtkmisc.h"
+
+#ifndef NOT_X_WINDOWS
+#include <gdk/gdkx.h>
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <X11/Xatom.h>
+#endif
 
 #define CAT2(x,y) x ## y
 #define CAT(x,y) CAT2(x,y)
@@ -72,6 +74,8 @@ extern int use_pty_argv;
  */
 static guint timer_id = 0;
 
+struct clipboard_data_instance;
+
 struct gui_data {
     GtkWidget *window, *area, *sbar;
     GtkBox *hbox;
@@ -96,11 +100,16 @@ struct gui_data {
 #if !GTK_CHECK_VERSION(3,0,0)
     GdkColormap *colmap;
 #endif
-    wchar_t *pastein_data;
     int direct_to_font;
+    wchar_t *pastein_data;
     int pastein_data_len;
+#ifdef JUST_USE_GTK_CLIPBOARD_UTF8
+    GtkClipboard *clipboard;
+    struct clipboard_data_instance *current_cdi;
+#else
     char *pasteout_data, *pasteout_data_ctext, *pasteout_data_utf8;
     int pasteout_data_len, pasteout_data_ctext_len, pasteout_data_utf8_len;
+#endif
     int font_width, font_height;
     int width, height;
     int ignore_sbar;
@@ -131,6 +140,7 @@ struct gui_data {
     int window_border;
     int cursor_type;
     int drawtype;
+    int meta_mod_mask;
 };
 
 static void cache_conf_values(struct gui_data *inst)
@@ -138,6 +148,15 @@ static void cache_conf_values(struct gui_data *inst)
     inst->bold_style = conf_get_int(inst->conf, CONF_bold_style);
     inst->window_border = conf_get_int(inst->conf, CONF_window_border);
     inst->cursor_type = conf_get_int(inst->conf, CONF_cursor_type);
+#ifdef OSX_META_KEY_CONFIG
+    inst->meta_mod_mask = 0;
+    if (conf_get_int(inst->conf, CONF_osx_option_meta))
+        inst->meta_mod_mask |= GDK_MOD1_MASK;
+    if (conf_get_int(inst->conf, CONF_osx_command_meta))
+        inst->meta_mod_mask |= GDK_MOD2_MASK;
+#else
+    inst->meta_mod_mask = GDK_MOD1_MASK;
+#endif
 }
 
 struct draw_ctx {
@@ -183,7 +202,7 @@ void connection_fatal(void *frontend, const char *p, ...)
 FontSpec *platform_default_fontspec(const char *name)
 {
     if (!strcmp(name, "Font"))
-	return fontspec_new("server:fixed");
+	return fontspec_new(DEFAULT_GTK_FONT);
     else
         return fontspec_new("");
 }
@@ -623,6 +642,17 @@ gint expose_area(GtkWidget *widget, GdkEventExpose *event, gpointer data)
 #define KEY_PRESSED(k) \
     (inst->keystate[(k) / 32] & (1 << ((k) % 32)))
 
+#ifdef KEY_EVENT_DIAGNOSTICS
+char *dup_keyval_name(guint keyval)
+{
+    const char *name = gdk_keyval_name(keyval);
+    if (name)
+        return dupstr(name);
+    else
+        return dupprintf("UNKNOWN[%u]", (unsigned)keyval);
+}
+#endif
+
 gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 {
     struct gui_data *inst = (struct gui_data *)data;
@@ -640,131 +670,82 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
     output_charset = CS_ISO8859_1;
 
 #ifdef KEY_EVENT_DIAGNOSTICS
-    /*
-     * Condition this mess in if you want to debug keyboard events as
-     * they come in to this function (e.g. because some particular
-     * port of GDK is producing an unexpected arrangement of
-     * modifiers).
-     */
-#define TRY(val, prefix, string)                                \
-    if ((val) == prefix ## string) printf("%s", #string); else
-#define GIVE_UP(val)                            \
-    printf("%d", (int)(val))
-#define TRY_MASK(val, prefix, string, suffix)           \
-        if ((val) & prefix ## string ## suffix) {       \
-            (val) &= ~ prefix ## string ## suffix;      \
-            printf("%s", #string);                      \
-            if (val) printf("|");                       \
-        }
-#define GIVE_UP_MASK(val)                               \
-        do                                              \
-        {                                               \
-            if ((val)) printf("%d", (int)(val));        \
-        } while (0)
-
-    printf("key_event: type=");
-    TRY(event->type, GDK_KEY_, PRESS)
-    TRY(event->type, GDK_KEY_, RELEASE)
-    GIVE_UP(event->type);
-    printf(" keyval=");
-    TRY(event->keyval, GDK_KEY_, Alt_L)
-    TRY(event->keyval, GDK_KEY_, Alt_R)
-    TRY(event->keyval, GDK_KEY_, BackSpace)
-    TRY(event->keyval, GDK_KEY_, Begin)
-    TRY(event->keyval, GDK_KEY_, Break)
-    TRY(event->keyval, GDK_KEY_, Delete)
-    TRY(event->keyval, GDK_KEY_, Down)
-    TRY(event->keyval, GDK_KEY_, End)
-    TRY(event->keyval, GDK_KEY_, Escape)
-    TRY(event->keyval, GDK_KEY_, F10)
-    TRY(event->keyval, GDK_KEY_, F11)
-    TRY(event->keyval, GDK_KEY_, F12)
-    TRY(event->keyval, GDK_KEY_, F13)
-    TRY(event->keyval, GDK_KEY_, F14)
-    TRY(event->keyval, GDK_KEY_, F15)
-    TRY(event->keyval, GDK_KEY_, F16)
-    TRY(event->keyval, GDK_KEY_, F17)
-    TRY(event->keyval, GDK_KEY_, F18)
-    TRY(event->keyval, GDK_KEY_, F19)
-    TRY(event->keyval, GDK_KEY_, F1)
-    TRY(event->keyval, GDK_KEY_, F20)
-    TRY(event->keyval, GDK_KEY_, F2)
-    TRY(event->keyval, GDK_KEY_, F3)
-    TRY(event->keyval, GDK_KEY_, F4)
-    TRY(event->keyval, GDK_KEY_, F5)
-    TRY(event->keyval, GDK_KEY_, F6)
-    TRY(event->keyval, GDK_KEY_, F7)
-    TRY(event->keyval, GDK_KEY_, F8)
-    TRY(event->keyval, GDK_KEY_, F9)
-    TRY(event->keyval, GDK_KEY_, Home)
-    TRY(event->keyval, GDK_KEY_, Insert)
-    TRY(event->keyval, GDK_KEY_, ISO_Left_Tab)
-    TRY(event->keyval, GDK_KEY_, KP_0)
-    TRY(event->keyval, GDK_KEY_, KP_1)
-    TRY(event->keyval, GDK_KEY_, KP_2)
-    TRY(event->keyval, GDK_KEY_, KP_3)
-    TRY(event->keyval, GDK_KEY_, KP_4)
-    TRY(event->keyval, GDK_KEY_, KP_5)
-    TRY(event->keyval, GDK_KEY_, KP_6)
-    TRY(event->keyval, GDK_KEY_, KP_7)
-    TRY(event->keyval, GDK_KEY_, KP_8)
-    TRY(event->keyval, GDK_KEY_, KP_9)
-    TRY(event->keyval, GDK_KEY_, KP_Add)
-    TRY(event->keyval, GDK_KEY_, KP_Begin)
-    TRY(event->keyval, GDK_KEY_, KP_Decimal)
-    TRY(event->keyval, GDK_KEY_, KP_Delete)
-    TRY(event->keyval, GDK_KEY_, KP_Divide)
-    TRY(event->keyval, GDK_KEY_, KP_Down)
-    TRY(event->keyval, GDK_KEY_, KP_End)
-    TRY(event->keyval, GDK_KEY_, KP_Enter)
-    TRY(event->keyval, GDK_KEY_, KP_Home)
-    TRY(event->keyval, GDK_KEY_, KP_Insert)
-    TRY(event->keyval, GDK_KEY_, KP_Left)
-    TRY(event->keyval, GDK_KEY_, KP_Multiply)
-    TRY(event->keyval, GDK_KEY_, KP_Page_Down)
-    TRY(event->keyval, GDK_KEY_, KP_Page_Up)
-    TRY(event->keyval, GDK_KEY_, KP_Right)
-    TRY(event->keyval, GDK_KEY_, KP_Subtract)
-    TRY(event->keyval, GDK_KEY_, KP_Up)
-    TRY(event->keyval, GDK_KEY_, Left)
-    TRY(event->keyval, GDK_KEY_, Meta_L)
-    TRY(event->keyval, GDK_KEY_, Meta_R)
-    TRY(event->keyval, GDK_KEY_, Num_Lock)
-    TRY(event->keyval, GDK_KEY_, Page_Down)
-    TRY(event->keyval, GDK_KEY_, Page_Up)
-    TRY(event->keyval, GDK_KEY_, Return)
-    TRY(event->keyval, GDK_KEY_, Right)
-    TRY(event->keyval, GDK_KEY_, Tab)
-    TRY(event->keyval, GDK_KEY_, Up)
-    TRY(event->keyval, GDK_KEY_, Shift_L)
-    TRY(event->keyval, GDK_KEY_, Shift_R)
-    TRY(event->keyval, GDK_KEY_, Control_L)
-    TRY(event->keyval, GDK_KEY_, Control_R)
-    TRY(event->keyval, GDK_KEY_, Caps_Lock)
-    TRY(event->keyval, GDK_KEY_, Shift_Lock)
-    TRY(event->keyval, GDK_KEY_, Super_L)
-    TRY(event->keyval, GDK_KEY_, Super_R)
-    TRY(event->keyval, GDK_KEY_, Hyper_L)
-    TRY(event->keyval, GDK_KEY_, Hyper_R)
-    GIVE_UP(event->keyval);
-    printf(" state=");
     {
-        int val = event->state;
-        TRY_MASK(val, GDK_, SHIFT, _MASK)
-        TRY_MASK(val, GDK_, LOCK, _MASK)
-        TRY_MASK(val, GDK_, CONTROL, _MASK)
-        TRY_MASK(val, GDK_, MOD1, _MASK)
-        TRY_MASK(val, GDK_, MOD2, _MASK)
-        TRY_MASK(val, GDK_, MOD3, _MASK)
-        TRY_MASK(val, GDK_, MOD4, _MASK)
-        TRY_MASK(val, GDK_, MOD5, _MASK)
-        TRY_MASK(val, GDK_, SUPER, _MASK)
-        TRY_MASK(val, GDK_, HYPER, _MASK)
-        TRY_MASK(val, GDK_, META, _MASK)
-        GIVE_UP_MASK(val);
+        char *type_string, *state_string, *keyval_string, *string_string;
+
+        type_string = (event->type == GDK_KEY_PRESS ? dupstr("PRESS") :
+                       event->type == GDK_KEY_RELEASE ? dupstr("RELEASE") :
+                       dupprintf("UNKNOWN[%d]", (int)event->type));
+
+        {
+            static const struct {
+                int mod_bit;
+                const char *name;
+            } mod_bits[] = {
+                {GDK_SHIFT_MASK, "SHIFT"},
+                {GDK_LOCK_MASK, "LOCK"},
+                {GDK_CONTROL_MASK, "CONTROL"},
+                {GDK_MOD1_MASK, "MOD1"},
+                {GDK_MOD2_MASK, "MOD2"},
+                {GDK_MOD3_MASK, "MOD3"},
+                {GDK_MOD4_MASK, "MOD4"},
+                {GDK_MOD5_MASK, "MOD5"},
+                {GDK_SUPER_MASK, "SUPER"},
+                {GDK_HYPER_MASK, "HYPER"},
+                {GDK_META_MASK, "META"},
+            };
+            int i;
+            int val = event->state;
+
+            state_string = dupstr("");
+
+            for (i = 0; i < lenof(mod_bits); i++) {
+                if (val & mod_bits[i].mod_bit) {
+                    char *old = state_string;
+                    state_string = dupcat(state_string,
+                                          state_string[0] ? "|" : "",
+                                          mod_bits[i].name,
+                                          (char *)NULL);
+                    sfree(old);
+
+                    val &= ~mod_bits[i].mod_bit;
+                }
+            }
+
+            if (val || !state_string[0]) {
+                char *old = state_string;
+                state_string = dupprintf("%s%s%d", state_string,
+                                         state_string[0] ? "|" : "", val);
+                sfree(old);
+            }
+        }
+
+        keyval_string = dup_keyval_name(event->keyval);
+
+        string_string = dupstr("");
+        {
+            int i;
+            for (i = 0; event->string[i]; i++) {
+                char *old = string_string;
+                string_string = dupprintf("%s%s%02x", string_string,
+                                          string_string[0] ? " " : "",
+                                          (unsigned)event->string[i] & 0xFF);
+                sfree(old);
+            }
+        }
+
+        debug(("key_event: type=%s keyval=%s state=%s "
+               "hardware_keycode=%d is_modifier=%s string=[%s]\n",
+               type_string, keyval_string, state_string,
+               (int)event->hardware_keycode,
+               event->is_modifier ? "TRUE" : "FALSE",
+               string_string));
+
+        sfree(type_string);
+        sfree(state_string);
+        sfree(keyval_string);
+        sfree(string_string);
     }
-    printf(" hardware_keycode=%d is_modifier=%s\n",
-           (int)event->hardware_keycode, event->is_modifier ? "TRUE" : "FALSE");
 #endif /* KEY_EVENT_DIAGNOSTICS */
 
     /*
@@ -783,8 +764,9 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
              event->keyval == GDK_KEY_Alt_L ||
              event->keyval == GDK_KEY_Alt_R) &&
             inst->alt_keycode >= 0 && inst->alt_digits > 1) {
-#ifdef KEY_DEBUGGING
-            printf("Alt key up, keycode = %d\n", inst->alt_keycode);
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - modifier release terminates Alt+numberpad input, "
+                   "keycode = %d\n", inst->alt_keycode));
 #endif
             /*
              * FIXME: we might usefully try to do something clever here
@@ -796,23 +778,23 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
             goto done;
         }
 #if GTK_CHECK_VERSION(2,0,0)
-        if (gtk_im_context_filter_keypress(inst->imc, event))
+#ifdef KEY_EVENT_DIAGNOSTICS
+        debug((" - key release, passing to IM\n"));
+#endif
+        if (gtk_im_context_filter_keypress(inst->imc, event)) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - key release accepted by IM\n"));
+#endif
             return TRUE;
+        } else {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - key release not accepted by IM\n"));
+#endif
+        }
 #endif
     }
 
     if (event->type == GDK_KEY_PRESS) {
-#ifdef KEY_DEBUGGING
-	{
-	    int i;
-	    printf("keypress: keyval = %04x, state = %08x; string =",
-		   event->keyval, event->state);
-	    for (i = 0; event->string[i]; i++)
-		printf(" %02x", (unsigned char) event->string[i]);
-	    printf("\n");
-	}
-#endif
-
 	/*
 	 * NYI: Compose key (!!! requires Unicode faff before even trying)
 	 */
@@ -826,18 +808,22 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	     event->keyval == GDK_KEY_Meta_R ||
              event->keyval == GDK_KEY_Alt_L ||
              event->keyval == GDK_KEY_Alt_R)) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - modifier press potentially begins Alt+numberpad "
+                   "input\n"));
+#endif
 	    inst->alt_keycode = -1;
             inst->alt_digits = 0;
 	    goto done;		       /* this generates nothing else */
 	}
 
 	/*
-	 * If we're seeing a numberpad key press with Mod1 down,
+	 * If we're seeing a numberpad key press with Meta down,
 	 * consider adding it to alt_keycode if that's sensible.
-	 * Anything _else_ with Mod1 down cancels any possibility
+	 * Anything _else_ with Meta down cancels any possibility
 	 * of an ALT keycode: we set alt_keycode to -2.
 	 */
-	if ((event->state & GDK_MOD1_MASK) && inst->alt_keycode != -2) {
+	if ((event->state & inst->meta_mod_mask) && inst->alt_keycode != -2) {
 	    int digit = -1;
 	    switch (event->keyval) {
 	      case GDK_KEY_KP_0: case GDK_KEY_KP_Insert: digit = 0; break;
@@ -854,17 +840,17 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	    if (digit < 0)
 		inst->alt_keycode = -2;   /* it's invalid */
 	    else {
-#ifdef KEY_DEBUGGING
-		printf("Adding digit %d to keycode %d", digit,
-		       inst->alt_keycode);
+#ifdef KEY_EVENT_DIAGNOSTICS
+                int old_keycode = inst->alt_keycode;
 #endif
 		if (inst->alt_keycode == -1)
 		    inst->alt_keycode = digit;   /* one-digit code */
 		else
 		    inst->alt_keycode = inst->alt_keycode * 10 + digit;
                 inst->alt_digits++;
-#ifdef KEY_DEBUGGING
-		printf(" gives new code %d\n", inst->alt_keycode);
+#ifdef KEY_EVENT_DIAGNOSTICS
+                debug((" - Alt+numberpad digit %d added to keycode %d"
+                       " gives %d\n", digit, old_keycode, inst->alt_keycode));
 #endif
 		/* Having used this digit, we now do nothing more with it. */
 		goto done;
@@ -877,21 +863,33 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	 */
 	if (event->keyval == GDK_KEY_Page_Up &&
             (event->state & GDK_SHIFT_MASK)) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Shift-PgUp scroll\n"));
+#endif
 	    term_scroll(inst->term, 0, -inst->height/2);
 	    return TRUE;
 	}
 	if (event->keyval == GDK_KEY_Page_Up &&
             (event->state & GDK_CONTROL_MASK)) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Ctrl-PgUp scroll\n"));
+#endif
 	    term_scroll(inst->term, 0, -1);
 	    return TRUE;
 	}
 	if (event->keyval == GDK_KEY_Page_Down &&
             (event->state & GDK_SHIFT_MASK)) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Shift-PgDn scroll\n"));
+#endif
 	    term_scroll(inst->term, 0, +inst->height/2);
 	    return TRUE;
 	}
 	if (event->keyval == GDK_KEY_Page_Down &&
             (event->state & GDK_CONTROL_MASK)) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Ctrl-PgDn scroll\n"));
+#endif
 	    term_scroll(inst->term, 0, +1);
 	    return TRUE;
 	}
@@ -901,6 +899,9 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	 */
 	if (event->keyval == GDK_KEY_Insert &&
             (event->state & GDK_SHIFT_MASK)) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Shift-Insert paste\n"));
+#endif
 	    request_paste(inst);
 	    return TRUE;
 	}
@@ -924,7 +925,7 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	 */
 	output_charset = CS_ISO8859_1;
 	strncpy(output+1, event->string, lenof(output)-1);
-#else
+#else /* !GTK_CHECK_VERSION(2,0,0) */
         /*
          * Most things can now be passed to
          * gtk_im_context_filter_keypress without breaking anything
@@ -984,8 +985,40 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
                     event->keyval == GDK_KEY_KP_Page_Up)) {
             /* nethack mode; do nothing */
         } else {
-            if (gtk_im_context_filter_keypress(inst->imc, event))
-                return TRUE;
+            int try_filter = TRUE;
+
+#ifdef META_MANUAL_MASK
+            if (event->state & META_MANUAL_MASK & inst->meta_mod_mask) {
+                /*
+                 * If this key event had a Meta modifier bit set which
+                 * is also in META_MANUAL_MASK, that means passing
+                 * such an event to the GtkIMContext will be unhelpful
+                 * (it will eat the keystroke and turn it into
+                 * something not what we wanted).
+                 */
+#ifdef KEY_EVENT_DIAGNOSTICS
+                debug((" - Meta modifier requiring manual intervention, "
+                       "suppressing IM filtering\n"));
+#endif
+                try_filter = FALSE;
+            }
+#endif
+
+            if (try_filter) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+                debug((" - general key press, passing to IM\n"));
+#endif
+                if (gtk_im_context_filter_keypress(inst->imc, event)) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+                    debug((" - key press accepted by IM\n"));
+#endif
+                    return TRUE;
+                } else {
+#ifdef KEY_EVENT_DIAGNOSTICS
+                    debug((" - key press not accepted by IM\n"));
+#endif
+                }
+            }
         }
 
 	/*
@@ -1011,40 +1044,162 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 			    event->string, strlen(event->string),
 			    widedata, lenof(widedata)-1);
 
+#ifdef KEY_EVENT_DIAGNOSTICS
+            {
+                char *string_string = dupstr("");
+                int i;
+
+                for (i = 0; i < wlen; i++) {
+                    char *old = string_string;
+                    string_string = dupprintf("%s%s%04x", string_string,
+                                              string_string[0] ? " " : "",
+                                              (unsigned)widedata[i]);
+                    sfree(old);
+                }
+                debug((" - string translated into Unicode = [%s]\n",
+                       string_string));
+                sfree(string_string);
+            }
+#endif
+
 	    wp = widedata;
 	    ulen = charset_from_unicode(&wp, &wlen, output+1, lenof(output)-2,
 					CS_UTF8, NULL, NULL, 0);
+
+#ifdef KEY_EVENT_DIAGNOSTICS
+            {
+                char *string_string = dupstr("");
+                int i;
+
+                for (i = 0; i < ulen; i++) {
+                    char *old = string_string;
+                    string_string = dupprintf("%s%s%02x", string_string,
+                                              string_string[0] ? " " : "",
+                                              (unsigned)output[i+1] & 0xFF);
+                    sfree(old);
+                }
+                debug((" - string translated into UTF-8 = [%s]\n",
+                       string_string));
+                sfree(string_string);
+            }
+#endif
+
 	    output[1+ulen] = '\0';
 	}
-#endif
+#endif /* !GTK_CHECK_VERSION(2,0,0) */
 
 	if (!output[1] &&
 	    (ucsval = keysym_to_unicode(event->keyval)) >= 0) {
 	    ucsoutput[0] = '\033';
 	    ucsoutput[1] = ucsval;
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - keysym_to_unicode gave %04x\n",
+                   (unsigned)ucsoutput[1]));
+#endif
 	    use_ucsoutput = TRUE;
 	    end = 2;
 	} else {
 	    output[lenof(output)-1] = '\0';
 	    end = strlen(output);
 	}
-	if (event->state & GDK_MOD1_MASK) {
+	if (event->state & inst->meta_mod_mask) {
 	    start = 0;
 	    if (end == 1) end = 0;
+
+#ifdef META_MANUAL_MASK
+            if (event->state & META_MANUAL_MASK) {
+                /*
+                 * Key events which have a META_MANUAL_MASK meta bit
+                 * set may have a keyval reflecting that, e.g. on OS X
+                 * the Option key acts as an AltGr-like modifier and
+                 * causes different Unicode characters to be output.
+                 *
+                 * To work around this, we clear the dangerous
+                 * modifier bit and retranslate from the hardware
+                 * keycode as if the key had been pressed without that
+                 * modifier. Then we prefix Esc to *that*.
+                 */
+                guint new_keyval;
+                GdkModifierType consumed;
+                if (gdk_keymap_translate_keyboard_state
+                    (gdk_keymap_get_for_display(gdk_display_get_default()),
+                     event->hardware_keycode, event->state & ~META_MANUAL_MASK,
+                     0, &new_keyval, NULL, NULL, &consumed)) {
+                    ucsoutput[0] = '\033';
+                    ucsoutput[1] = gdk_keyval_to_unicode(new_keyval);
+#ifdef KEY_EVENT_DIAGNOSTICS
+                    {
+                        char *keyval_name = dup_keyval_name(new_keyval);
+                        debug((" - retranslation for manual Meta: "
+                               "new keyval = %s, Unicode = %04x\n",
+                               keyval_name, (unsigned)ucsoutput[1]));
+                        sfree(keyval_name);
+                    }
+#endif
+                    use_ucsoutput = TRUE;
+                    end = 2;
+                }
+            }
+#endif
 	} else
 	    start = 1;
 
 	/* Control-` is the same as Control-\ (unless gtk has a better idea) */
 	if (!output[1] && event->keyval == '`' &&
 	    (event->state & GDK_CONTROL_MASK)) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Ctrl-` special case, translating as 1c\n"));
+#endif
 	    output[1] = '\x1C';
 	    use_ucsoutput = FALSE;
 	    end = 2;
 	}
 
+        /* Some GTK backends (e.g. Quartz) do not change event->string
+         * in response to the Control modifier. So we do it ourselves
+         * here, if it's not already happened.
+         *
+         * The translations below are in line with X11 policy as far
+         * as I know. */
+        if ((event->state & GDK_CONTROL_MASK) && end == 2) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            int orig = output[1];
+#endif
+
+            if (output[1] >= '3' && output[1] <= '7') {
+                /* ^3,...,^7 map to 0x1B,...,0x1F */
+                output[1] += '\x1B' - '3';
+            } else if (output[1] == '2' || output[1] == ' ') {
+                /* ^2 and ^Space are both ^@, i.e. \0 */
+                output[1] = '\0';
+            } else if (output[1] == '8') {
+                /* ^8 is DEL */
+                output[1] = '\x7F';
+            } else if (output[1] == '/') {
+                /* ^/ is the same as ^_ */
+                output[1] = '\x1F';
+            } else if (output[1] >= 0x40 && output[1] < 0x7F) {
+                /* Everything anywhere near the alphabetics just gets
+                 * masked. */
+                output[1] &= 0x1F;
+            }
+            /* Anything else, e.g. '0', is unchanged. */
+
+#ifdef KEY_EVENT_DIAGNOSTICS
+            if (orig == output[1])
+                debug((" - manual Ctrl key handling did nothing\n"));
+            else
+                debug((" - manual Ctrl key handling: %02x -> %02x\n",
+                       (unsigned)orig, (unsigned)output[1]));
+#endif
+        }
+
 	/* Control-Break sends a Break special to the backend */
 	if (event->keyval == GDK_KEY_Break &&
 	    (event->state & GDK_CONTROL_MASK)) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Ctrl-Break special case, sending TS_BRK\n"));
+#endif
 	    if (inst->back)
 		inst->back->special(inst->backhandle, TS_BRK);
 	    return TRUE;
@@ -1053,6 +1208,9 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	/* We handle Return ourselves, because it needs to be flagged as
 	 * special to ldisc. */
 	if (event->keyval == GDK_KEY_Return) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Return special case, translating as 0d + special\n"));
+#endif
 	    output[1] = '\015';
 	    use_ucsoutput = FALSE;
 	    end = 2;
@@ -1065,6 +1223,9 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	     event->keyval == '@') &&
 	    (event->state & (GDK_SHIFT_MASK |
 			     GDK_CONTROL_MASK)) == GDK_CONTROL_MASK) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Ctrl-{space,2,@} special case, translating as 00\n"));
+#endif
 	    output[1] = '\0';
 	    use_ucsoutput = FALSE;
 	    end = 2;
@@ -1074,6 +1235,9 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	if (!output[1] && event->keyval == ' ' &&
 	    (event->state & (GDK_SHIFT_MASK | GDK_CONTROL_MASK)) ==
 	    (GDK_SHIFT_MASK | GDK_CONTROL_MASK)) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Ctrl-Shift-space special case, translating as 00a0\n"));
+#endif
 	    output[1] = '\240';
 	    output_charset = CS_ISO8859_1;
 	    use_ucsoutput = FALSE;
@@ -1085,6 +1249,10 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	    !(event->state & GDK_SHIFT_MASK)) {
 	    output[1] = conf_get_int(inst->conf, CONF_bksp_is_delete) ?
 		'\x7F' : '\x08';
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Backspace, translating as %02x\n",
+                   (unsigned)output[1]));
+#endif
 	    use_ucsoutput = FALSE;
 	    end = 2;
 	    special = TRUE;
@@ -1094,6 +1262,10 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	    (event->state & GDK_SHIFT_MASK)) {
 	    output[1] = conf_get_int(inst->conf, CONF_bksp_is_delete) ?
 		'\x08' : '\x7F';
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Shift-Backspace, translating as %02x\n",
+                   (unsigned)output[1]));
+#endif
 	    use_ucsoutput = FALSE;
 	    end = 2;
 	    special = TRUE;
@@ -1103,6 +1275,9 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	if (event->keyval == GDK_KEY_ISO_Left_Tab ||
 	    (event->keyval == GDK_KEY_Tab &&
              (event->state & GDK_SHIFT_MASK))) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Shift-Tab, translating as ESC [ Z\n"));
+#endif
 	    end = 1 + sprintf(output+1, "\033[Z");
 	    use_ucsoutput = FALSE;
 	}
@@ -1110,6 +1285,9 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	 * (Curiously, at least one version of the MacOS 10.5 X server
 	 * doesn't translate Tab for us. */
 	if (event->keyval == GDK_KEY_Tab && end <= 1) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            debug((" - Tab, translating as 09\n"));
+#endif
 	    output[1] = '\t';
 	    end = 2;
 	}
@@ -1147,6 +1325,9 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 		    output[1] = keys[1];
 		else
 		    output[1] = keys[0];
+#ifdef KEY_EVENT_DIAGNOSTICS
+                debug((" - Nethack-mode key"));
+#endif
 		use_ucsoutput = FALSE;
 		goto done;
 	    }
@@ -1202,6 +1383,9 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 		} else
 		    end = 1 + sprintf(output+1, "\033O%c", xkey);
 		use_ucsoutput = FALSE;
+#ifdef KEY_EVENT_DIAGNOSTICS
+                debug((" - Application keypad mode key"));
+#endif
 		goto done;
 	    }
 	}
@@ -1306,6 +1490,9 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 
 	    if (inst->term->vt52_mode && code > 0 && code <= 6) {
 		end = 1 + sprintf(output+1, "\x1B%c", " HLMEIG"[code]);
+#ifdef KEY_EVENT_DIAGNOSTICS
+                debug((" - VT52 mode small keypad key"));
+#endif
 		use_ucsoutput = FALSE;
 		goto done;
 	    }
@@ -1331,6 +1518,9 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 		if (event->state & GDK_SHIFT_MASK) index += 12;
 		if (event->state & GDK_CONTROL_MASK) index += 24;
 		end = 1 + sprintf(output+1, "\x1B[%c", codes[index]);
+#ifdef KEY_EVENT_DIAGNOSTICS
+                debug((" - SCO mode function key"));
+#endif
 		use_ucsoutput = FALSE;
 		goto done;
 	    }
@@ -1343,6 +1533,9 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 		} else {
 		    end = 1 + sprintf(output+1, "\x1B[%c", codes[code-1]);
 		}
+#ifdef KEY_EVENT_DIAGNOSTICS
+                debug((" - SCO mode small keypad key"));
+#endif
 		use_ucsoutput = FALSE;
 		goto done;
 	    }
@@ -1353,35 +1546,59 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 		    offt++;
 		if (code > 21)
 		    offt++;
-		if (inst->term->vt52_mode)
+		if (inst->term->vt52_mode) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+                    debug((" - VT52 mode function key"));
+#endif
 		    end = 1 + sprintf(output+1,
 				      "\x1B%c", code + 'P' - 11 - offt);
-		else
+                } else {
+#ifdef KEY_EVENT_DIAGNOSTICS
+                    debug((" - VT100+ mode function key"));
+#endif
 		    end = 1 + sprintf(output+1,
 				      "\x1BO%c", code + 'P' - 11 - offt);
+                }
 		use_ucsoutput = FALSE;
 		goto done;
 	    }
 	    if (funky_type == FUNKY_LINUX && code >= 11 && code <= 15) {
 		end = 1 + sprintf(output+1, "\x1B[[%c", code + 'A' - 11);
+#ifdef KEY_EVENT_DIAGNOSTICS
+                debug((" - Linux mode F1-F5 function key"));
+#endif
 		use_ucsoutput = FALSE;
 		goto done;
 	    }
 	    if (funky_type == FUNKY_XTERM && code >= 11 && code <= 14) {
-		if (inst->term->vt52_mode)
+		if (inst->term->vt52_mode) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+                    debug((" - VT52 mode (overriding xterm) F1-F4 function"
+                           " key"));
+#endif
 		    end = 1 + sprintf(output+1, "\x1B%c", code + 'P' - 11);
-		else
+                } else {
+#ifdef KEY_EVENT_DIAGNOSTICS
+                    debug((" - xterm mode F1-F4 function key"));
+#endif
 		    end = 1 + sprintf(output+1, "\x1BO%c", code + 'P' - 11);
+                }
 		use_ucsoutput = FALSE;
 		goto done;
 	    }
 	    if ((code == 1 || code == 4) &&
 		conf_get_int(inst->conf, CONF_rxvt_homeend)) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+                debug((" - rxvt style Home/End"));
+#endif
 		end = 1 + sprintf(output+1, code == 1 ? "\x1B[H" : "\x1BOw");
 		use_ucsoutput = FALSE;
 		goto done;
 	    }
 	    if (code) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+                debug((" - ordinary function key encoding"));
+#endif
 		end = 1 + sprintf(output+1, "\x1B[%d~", code);
 		use_ucsoutput = FALSE;
 		goto done;
@@ -1407,6 +1624,9 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	    if (xkey) {
 		end = 1 + format_arrow_key(output+1, inst->term, xkey,
 					   event->state & GDK_CONTROL_MASK);
+#ifdef KEY_EVENT_DIAGNOSTICS
+                debug((" - arrow key"));
+#endif
 		use_ucsoutput = FALSE;
 		goto done;
 	    }
@@ -1417,15 +1637,22 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
     done:
 
     if (end-start > 0) {
-#ifdef KEY_DEBUGGING
-	int i;
-	printf("generating sequence:");
-	for (i = start; i < end; i++)
-	    printf(" %02x", (unsigned char) output[i]);
-	printf("\n");
-#endif
-
 	if (special) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+            char *string_string = dupstr("");
+            int i;
+
+            for (i = start; i < end; i++) {
+                char *old = string_string;
+                string_string = dupprintf("%s%s%02x", string_string,
+                                          string_string[0] ? " " : "",
+                                          (unsigned)output[i] & 0xFF);
+                sfree(old);
+            }
+            debug((" - final output, special, generic encoding = [%s]\n",
+                   charset_to_localenc(output_charset), string_string));
+            sfree(string_string);
+#endif
 	    /*
 	     * For special control characters, the character set
 	     * should never matter.
@@ -1435,10 +1662,41 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 		ldisc_send(inst->ldisc, output+start, -2, 1);
 	} else if (!inst->direct_to_font) {
 	    if (!use_ucsoutput) {
+#ifdef KEY_EVENT_DIAGNOSTICS
+                char *string_string = dupstr("");
+                int i;
+
+                for (i = start; i < end; i++) {
+                    char *old = string_string;
+                    string_string = dupprintf("%s%s%02x", string_string,
+                                              string_string[0] ? " " : "",
+                                              (unsigned)output[i] & 0xFF);
+                    sfree(old);
+                }
+                debug((" - final output in %s = [%s]\n",
+                       charset_to_localenc(output_charset), string_string));
+                sfree(string_string);
+#endif
 		if (inst->ldisc)
 		    lpage_send(inst->ldisc, output_charset, output+start,
 			       end-start, 1);
 	    } else {
+#ifdef KEY_EVENT_DIAGNOSTICS
+                char *string_string = dupstr("");
+                int i;
+
+                for (i = start; i < end; i++) {
+                    char *old = string_string;
+                    string_string = dupprintf("%s%s%04x", string_string,
+                                              string_string[0] ? " " : "",
+                                              (unsigned)ucsoutput[i]);
+                    sfree(old);
+                }
+                debug((" - final output in Unicode = [%s]\n",
+                       string_string));
+                sfree(string_string);
+#endif
+
 		/*
 		 * We generated our own Unicode key data from the
 		 * keysym, so use that instead.
@@ -1451,6 +1709,21 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	     * In direct-to-font mode, we just send the string
 	     * exactly as we received it.
 	     */
+#ifdef KEY_EVENT_DIAGNOSTICS
+            char *string_string = dupstr("");
+            int i;
+
+            for (i = start; i < end; i++) {
+                char *old = string_string;
+                string_string = dupprintf("%s%s%02x", string_string,
+                                          string_string[0] ? " " : "",
+                                          (unsigned)output[i] & 0xFF);
+                sfree(old);
+            }
+            debug((" - final output in direct-to-font encoding = [%s]\n",
+                   string_string));
+            sfree(string_string);
+#endif
 	    if (inst->ldisc)
 		ldisc_send(inst->ldisc, output+start, end-start, 1);
 	}
@@ -1466,6 +1739,22 @@ gint key_event(GtkWidget *widget, GdkEventKey *event, gpointer data)
 void input_method_commit_event(GtkIMContext *imc, gchar *str, gpointer data)
 {
     struct gui_data *inst = (struct gui_data *)data;
+
+#ifdef KEY_EVENT_DIAGNOSTICS
+    char *string_string = dupstr("");
+    int i;
+
+    for (i = 0; str[i]; i++) {
+        char *old = string_string;
+        string_string = dupprintf("%s%s%02x", string_string,
+                                  string_string[0] ? " " : "",
+                                  (unsigned)str[i] & 0xFF);
+        sfree(old);
+    }
+    debug((" - IM commit event in UTF-8 = [%s]\n", string_string));
+    sfree(string_string);
+#endif
+
     if (inst->ldisc)
         lpage_send(inst->ldisc, CS_UTF8, str, strlen(str), 1);
     show_mouseptr(inst, 0);
@@ -1486,7 +1775,7 @@ gboolean button_internal(struct gui_data *inst, guint32 timestamp,
 
     shift = state & GDK_SHIFT_MASK;
     ctrl = state & GDK_CONTROL_MASK;
-    alt = state & GDK_MOD1_MASK;
+    alt = state & inst->meta_mod_mask;
 
     raw_mouse_mode =
         send_raw_mouse && !(shift && conf_get_int(inst->conf,
@@ -1584,7 +1873,7 @@ gint motion_event(GtkWidget *widget, GdkEventMotion *event, gpointer data)
 
     shift = event->state & GDK_SHIFT_MASK;
     ctrl = event->state & GDK_CONTROL_MASK;
-    alt = event->state & GDK_MOD1_MASK;
+    alt = event->state & inst->meta_mod_mask;
     if (event->state & GDK_BUTTON1_MASK)
 	button = MBT_LEFT;
     else if (event->state & GDK_BUTTON2_MASK)
@@ -2102,35 +2391,164 @@ void palette_reset(void *frontend)
     }
 }
 
-/* Ensure that all the cut buffers exist - according to the ICCCM, we must
- * do this before we start using cut buffers.
+#ifdef JUST_USE_GTK_CLIPBOARD_UTF8
+
+/* ----------------------------------------------------------------------
+ * Clipboard handling, using the high-level GtkClipboard interface in
+ * as hands-off a way as possible. We write and read the clipboard as
+ * UTF-8 text, and let GTK deal with converting to any other text
+ * formats it feels like.
  */
-void init_cutbuffers()
+
+void init_clipboard(struct gui_data *inst)
 {
-#ifndef NOT_X_WINDOWS
-    unsigned char empty[] = "";
-    Display *disp = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
-    XChangeProperty(disp, GDK_ROOT_WINDOW(),
-		    XA_CUT_BUFFER0, XA_STRING, 8, PropModeAppend, empty, 0);
-    XChangeProperty(disp, GDK_ROOT_WINDOW(),
-		    XA_CUT_BUFFER1, XA_STRING, 8, PropModeAppend, empty, 0);
-    XChangeProperty(disp, GDK_ROOT_WINDOW(),
-		    XA_CUT_BUFFER2, XA_STRING, 8, PropModeAppend, empty, 0);
-    XChangeProperty(disp, GDK_ROOT_WINDOW(),
-		    XA_CUT_BUFFER3, XA_STRING, 8, PropModeAppend, empty, 0);
-    XChangeProperty(disp, GDK_ROOT_WINDOW(),
-		    XA_CUT_BUFFER4, XA_STRING, 8, PropModeAppend, empty, 0);
-    XChangeProperty(disp, GDK_ROOT_WINDOW(),
-		    XA_CUT_BUFFER5, XA_STRING, 8, PropModeAppend, empty, 0);
-    XChangeProperty(disp, GDK_ROOT_WINDOW(),
-		    XA_CUT_BUFFER6, XA_STRING, 8, PropModeAppend, empty, 0);
-    XChangeProperty(disp, GDK_ROOT_WINDOW(),
-		    XA_CUT_BUFFER7, XA_STRING, 8, PropModeAppend, empty, 0);
-#endif
+    inst->clipboard = gtk_clipboard_get_for_display(gdk_display_get_default(),
+                                                    DEFAULT_CLIPBOARD);
 }
 
+/*
+ * Because calling gtk_clipboard_set_with_data triggers a call to the
+ * clipboard_clear function from the last time, we need to arrange a
+ * way to distinguish a real call to clipboard_clear for the _new_
+ * instance of the clipboard data from the leftover call for the
+ * outgoing one. We do this by setting the user data field in our
+ * gtk_clipboard_set_with_data() call, instead of the obvious pointer
+ * to 'inst', to one of these.
+ */
+struct clipboard_data_instance {
+    struct gui_data *inst;
+    char *pasteout_data_utf8;
+    int pasteout_data_utf8_len;
+};
+
+static void clipboard_provide_data(GtkClipboard *clipboard,
+                                   GtkSelectionData *selection_data,
+                                   guint info, gpointer data)
+{
+    struct clipboard_data_instance *cdi =
+        (struct clipboard_data_instance *)data;
+    struct gui_data *inst = cdi->inst;
+
+    if (inst->current_cdi == cdi) {
+        gtk_selection_data_set_text(selection_data, cdi->pasteout_data_utf8,
+                                    cdi->pasteout_data_utf8_len);
+    }
+}
+
+static void clipboard_clear(GtkClipboard *clipboard, gpointer data)
+{
+    struct clipboard_data_instance *cdi =
+        (struct clipboard_data_instance *)data;
+    struct gui_data *inst = cdi->inst;
+
+    if (inst->current_cdi == cdi) {
+        term_deselect(inst->term);
+        inst->current_cdi = NULL;
+    }
+    sfree(cdi->pasteout_data_utf8);
+    sfree(cdi);
+}
+
+void write_clip(void *frontend, wchar_t *data, int *attr, int len,
+                int must_deselect)
+{
+    struct gui_data *inst = (struct gui_data *)frontend;
+    struct clipboard_data_instance *cdi;
+
+    if (inst->direct_to_font) {
+        /* In this clipboard mode, we just can't paste if we're in
+         * direct-to-font mode. Fortunately, that shouldn't be
+         * important, because we'll only use this clipboard handling
+         * code on systems where that kind of font doesn't exist
+         * anyway. */
+        return;
+    }
+
+    cdi = snew(struct clipboard_data_instance);
+    cdi->inst = inst;
+    inst->current_cdi = cdi;
+    cdi->pasteout_data_utf8 = snewn(len*6, char);
+    {
+        const wchar_t *tmp = data;
+        int tmplen = len;
+        cdi->pasteout_data_utf8_len =
+            charset_from_unicode(&tmp, &tmplen, cdi->pasteout_data_utf8,
+                                 len*6, CS_UTF8, NULL, NULL, 0);
+    }
+
+    /*
+     * It would be nice to just call gtk_clipboard_set_text() in place
+     * of all of the faffing below. Unfortunately, that won't give me
+     * access to the clipboard-clear event, which we use to visually
+     * deselect text in the terminal.
+     */
+    {
+        GtkTargetList *targetlist;
+        GtkTargetEntry *targettable;
+        gint n_targets;
+
+        targetlist = gtk_target_list_new(NULL, 0);
+        gtk_target_list_add_text_targets(targetlist, 0);
+        targettable = gtk_target_table_new_from_list(targetlist, &n_targets);
+        gtk_clipboard_set_with_data(inst->clipboard, targettable, n_targets,
+                                    clipboard_provide_data, clipboard_clear,
+                                    cdi);
+        gtk_target_table_free(targettable, n_targets);
+        gtk_target_list_unref(targetlist);
+    }
+}
+
+static void clipboard_text_received(GtkClipboard *clipboard,
+                                    const gchar *text, gpointer data)
+{
+    struct gui_data *inst = (struct gui_data *)data;
+    int length;
+
+    if (!text)
+        return;
+
+    length = strlen(text);
+
+    if (inst->pastein_data)
+	sfree(inst->pastein_data);
+
+    inst->pastein_data = snewn(length, wchar_t);
+    inst->pastein_data_len = mb_to_wc(CS_UTF8, 0, text, length,
+                                      inst->pastein_data, length);
+
+    term_do_paste(inst->term);
+}
+
+void request_paste(void *frontend)
+{
+    struct gui_data *inst = (struct gui_data *)frontend;
+    gtk_clipboard_request_text(inst->clipboard, clipboard_text_received, inst);
+}
+
+#else /* JUST_USE_GTK_CLIPBOARD_UTF8 */
+
+/* ----------------------------------------------------------------------
+ * Clipboard handling for X, using the low-level gtk_selection_*
+ * interface, handling conversions to fiddly things like compound text
+ * ourselves, and storing in X cut buffers too.
+ *
+ * This version of the clipboard code has to be kept around for GTK1,
+ * which doesn't have the higher-level GtkClipboard interface at all.
+ * And since it works on GTK2 and GTK3 too and has had a good few
+ * years of shakedown and bug fixing, we might as well keep using it
+ * where it's applicable.
+ *
+ * It's _possible_ that we might be able to replicate all the
+ * important wrinkles of this code in GtkClipboard. (In particular,
+ * cut buffers or local analogue look as if they might be accessible
+ * via gtk_clipboard_set_can_store(), and delivering text in
+ * non-Unicode formats only in the direct-to-font case ought to be
+ * possible if we can figure out the right set of things to put in the
+ * GtkTargetList.) But that work can wait until there's a need for it!
+ */
+
 /* Store the data in a cut-buffer. */
-void store_cutbuffer(char * ptr, int len)
+static void store_cutbuffer(char * ptr, int len)
 {
 #ifndef NOT_X_WINDOWS
     Display *disp = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
@@ -2143,7 +2561,7 @@ void store_cutbuffer(char * ptr, int len)
 /* Retrieve data from a cut-buffer.
  * Returned data needs to be freed with XFree().
  */
-char * retrieve_cutbuffer(int * nbytes)
+static char *retrieve_cutbuffer(int *nbytes)
 {
 #ifndef NOT_X_WINDOWS
     Display *disp = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
@@ -2159,7 +2577,8 @@ char * retrieve_cutbuffer(int * nbytes)
 #endif
 }
 
-void write_clip(void *frontend, wchar_t * data, int *attr, int len, int must_deselect)
+void write_clip(void *frontend, wchar_t *data, int *attr, int len,
+                int must_deselect)
 {
     struct gui_data *inst = (struct gui_data *)frontend;
     if (inst->pasteout_data)
@@ -2257,8 +2676,8 @@ void write_clip(void *frontend, wchar_t * data, int *attr, int len, int must_des
 	term_deselect(inst->term);
 }
 
-void selection_get(GtkWidget *widget, GtkSelectionData *seldata,
-		   guint info, guint time_stamp, gpointer data)
+static void selection_get(GtkWidget *widget, GtkSelectionData *seldata,
+                          guint info, guint time_stamp, gpointer data)
 {
     struct gui_data *inst = (struct gui_data *)data;
     GdkAtom target = gtk_selection_data_get_target(seldata);
@@ -2276,8 +2695,8 @@ void selection_get(GtkWidget *widget, GtkSelectionData *seldata,
 			       inst->pasteout_data_len);
 }
 
-gint selection_clear(GtkWidget *widget, GdkEventSelection *seldata,
-		     gpointer data)
+static gint selection_clear(GtkWidget *widget, GdkEventSelection *seldata,
+                            gpointer data)
 {
     struct gui_data *inst = (struct gui_data *)data;
 
@@ -2328,10 +2747,8 @@ void request_paste(void *frontend)
     }
 }
 
-gint idle_paste_func(gpointer data);   /* forward ref */
-
-void selection_received(GtkWidget *widget, GtkSelectionData *seldata,
-			guint time, gpointer data)
+static void selection_received(GtkWidget *widget, GtkSelectionData *seldata,
+                               guint time, gpointer data)
 {
     struct gui_data *inst = (struct gui_data *)data;
     char *text;
@@ -2451,6 +2868,48 @@ void selection_received(GtkWidget *widget, GtkSelectionData *seldata,
 	XFree(text);
 #endif
 }
+
+void init_clipboard(struct gui_data *inst)
+{
+#ifndef NOT_X_WINDOWS
+    /*
+     * Ensure that all the cut buffers exist - according to the ICCCM,
+     * we must do this before we start using cut buffers.
+     */
+    unsigned char empty[] = "";
+    Display *disp = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
+    XChangeProperty(disp, GDK_ROOT_WINDOW(),
+		    XA_CUT_BUFFER0, XA_STRING, 8, PropModeAppend, empty, 0);
+    XChangeProperty(disp, GDK_ROOT_WINDOW(),
+		    XA_CUT_BUFFER1, XA_STRING, 8, PropModeAppend, empty, 0);
+    XChangeProperty(disp, GDK_ROOT_WINDOW(),
+		    XA_CUT_BUFFER2, XA_STRING, 8, PropModeAppend, empty, 0);
+    XChangeProperty(disp, GDK_ROOT_WINDOW(),
+		    XA_CUT_BUFFER3, XA_STRING, 8, PropModeAppend, empty, 0);
+    XChangeProperty(disp, GDK_ROOT_WINDOW(),
+		    XA_CUT_BUFFER4, XA_STRING, 8, PropModeAppend, empty, 0);
+    XChangeProperty(disp, GDK_ROOT_WINDOW(),
+		    XA_CUT_BUFFER5, XA_STRING, 8, PropModeAppend, empty, 0);
+    XChangeProperty(disp, GDK_ROOT_WINDOW(),
+		    XA_CUT_BUFFER6, XA_STRING, 8, PropModeAppend, empty, 0);
+    XChangeProperty(disp, GDK_ROOT_WINDOW(),
+		    XA_CUT_BUFFER7, XA_STRING, 8, PropModeAppend, empty, 0);
+#endif
+
+    g_signal_connect(G_OBJECT(inst->area), "selection_received",
+                     G_CALLBACK(selection_received), inst);
+    g_signal_connect(G_OBJECT(inst->area), "selection_get",
+                     G_CALLBACK(selection_get), inst);
+    g_signal_connect(G_OBJECT(inst->area), "selection_clear_event",
+                     G_CALLBACK(selection_clear), inst);
+}
+
+/*
+ * End of selection/clipboard handling.
+ * ----------------------------------------------------------------------
+ */
+
+#endif /* JUST_USE_GTK_CLIPBOARD_UTF8 */
 
 void get_clip(void *frontend, wchar_t ** p, int *len)
 {
@@ -3334,27 +3793,47 @@ int do_cmdline(int argc, char **argv, int do_everything, int *allow_launch,
 	} else if (!strcmp(p, "-fg") || !strcmp(p, "-bg") ||
 		   !strcmp(p, "-bfg") || !strcmp(p, "-bbg") ||
 		   !strcmp(p, "-cfg") || !strcmp(p, "-cbg")) {
-	    GdkColor col;
-
 	    EXPECTS_ARG;
 	    SECOND_PASS_ONLY;
-	    if (!gdk_color_parse(val, &col)) {
-		err = 1;
-		fprintf(stderr, "%s: unable to parse colour \"%s\"\n",
-                        appname, val);
-	    } else {
-		int index;
-		index = (!strcmp(p, "-fg") ? 0 :
-			 !strcmp(p, "-bg") ? 2 :
-			 !strcmp(p, "-bfg") ? 1 :
-			 !strcmp(p, "-bbg") ? 3 :
-			 !strcmp(p, "-cfg") ? 4 :
-			 !strcmp(p, "-cbg") ? 5 : -1);
-		assert(index != -1);
-		conf_set_int_int(conf, CONF_colours, index*3+0, col.red / 256);
-		conf_set_int_int(conf, CONF_colours, index*3+1,col.green/ 256);
-		conf_set_int_int(conf, CONF_colours, index*3+2, col.blue/ 256);
-	    }
+
+            {
+#if GTK_CHECK_VERSION(3,0,0)
+                GdkRGBA rgba;
+                int success = gdk_rgba_parse(&rgba, val);
+#else
+                GdkColor col;
+                int success = gdk_color_parse(val, &col);
+#endif
+
+                if (!success) {
+                    err = 1;
+                    fprintf(stderr, "%s: unable to parse colour \"%s\"\n",
+                            appname, val);
+                } else {
+#if GTK_CHECK_VERSION(3,0,0)
+                    int r = rgba.red * 255;
+                    int g = rgba.green * 255;
+                    int b = rgba.blue * 255;
+#else
+                    int r = col.red / 256;
+                    int g = col.green / 256;
+                    int b = col.blue / 256;
+#endif
+
+                    int index;
+                    index = (!strcmp(p, "-fg") ? 0 :
+                             !strcmp(p, "-bg") ? 2 :
+                             !strcmp(p, "-bfg") ? 1 :
+                             !strcmp(p, "-bbg") ? 3 :
+                             !strcmp(p, "-cfg") ? 4 :
+                             !strcmp(p, "-cbg") ? 5 : -1);
+                    assert(index != -1);
+
+                    conf_set_int_int(conf, CONF_colours, index*3+0, r);
+                    conf_set_int_int(conf, CONF_colours, index*3+1, g);
+                    conf_set_int_int(conf, CONF_colours, index*3+2, b);
+                }
+            }
 
 	} else if (use_pty_argv && !strcmp(p, "-e")) {
 	    /* This option swallows all further arguments. */
@@ -3489,6 +3968,12 @@ void uxsel_input_remove(uxsel_id *id) {
     gdk_input_remove(id->id);
 #endif
     sfree(id);
+}
+
+int frontend_is_utf8(void *frontend)
+{
+    struct gui_data *inst = (struct gui_data *)frontend;
+    return inst->ucsdata.line_codepage == CS_UTF8;
 }
 
 char *setup_fonts_ucs(struct gui_data *inst)
@@ -4304,8 +4789,6 @@ int pt_main(int argc, char **argv)
             exit(1);
         }
     }
-    init_cutbuffers();
-
     inst->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     {
         const char *winclass = conf_get_str(inst->conf, CONF_winclass);
@@ -4322,6 +4805,8 @@ int pt_main(int argc, char **argv)
     inst->width = conf_get_int(inst->conf, CONF_width);
     inst->height = conf_get_int(inst->conf, CONF_height);
     cache_conf_values(inst);
+
+    init_clipboard(inst);
 
     {
         int w = inst->font_width * inst->width + 2*inst->window_border;
@@ -4404,12 +4889,6 @@ int pt_main(int argc, char **argv)
 #endif
     g_signal_connect(G_OBJECT(inst->area), "motion_notify_event",
                      G_CALLBACK(motion_event), inst);
-    g_signal_connect(G_OBJECT(inst->area), "selection_received",
-                     G_CALLBACK(selection_received), inst);
-    g_signal_connect(G_OBJECT(inst->area), "selection_get",
-                     G_CALLBACK(selection_get), inst);
-    g_signal_connect(G_OBJECT(inst->area), "selection_clear_event",
-                     G_CALLBACK(selection_clear), inst);
 #if GTK_CHECK_VERSION(2,0,0)
     g_signal_connect(G_OBJECT(inst->imc), "commit",
                      G_CALLBACK(input_method_commit_event), inst);
