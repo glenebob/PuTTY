@@ -11414,6 +11414,22 @@ static void ssh_special(void *handle, Telnet_Special code)
     }
 }
 
+static void ssh_newline(void *handle, int newline_config)
+{
+    switch (newline_config) {
+      case NEWLINE_LF:
+	ssh_backend.send(handle, "\n", 1);
+	break;
+      case NEWLINE_CRLF:
+	ssh_backend.send(handle, "\r\n", 2);
+	break;
+      default:
+      case NEWLINE_CR:
+	ssh_backend.send(handle, "\r", 1);
+	break;
+    }
+}
+
 void *new_sock_channel(void *handle, struct PortForwarding *pf)
 {
     Ssh ssh = (Ssh) handle;
@@ -11618,7 +11634,7 @@ Backend ssh_backend = {
     ssh_sendbuffer,
     ssh_size,
     ssh_special,
-    default_newline,
+    ssh_newline,
     ssh_get_specials,
     ssh_connected,
     ssh_return_exitcode,

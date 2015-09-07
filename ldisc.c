@@ -296,7 +296,7 @@ void ldisc_send(void *handle, const char *buf, int len, int interactive)
 	      case KCTRL('M'):	       /* send with newline */
 		    if (ldisc->buflen > 0)
 			ldisc->back->send(ldisc->backhandle, ldisc->buf, ldisc->buflen);
-		    ldisc->back->newline(ldisc->back, ldisc->backhandle, ldisc->newline);
+		    ldisc->back->newline(ldisc->backhandle, ldisc->newline);
 		    if (ECHOING)
 			c_write(ldisc, "\r\n", 2);
 		    ldisc->buflen = 0;
@@ -331,7 +331,7 @@ void ldisc_send(void *handle, const char *buf, int len, int interactive)
 	    if (keyflag && len == 1) {
 		if (buf[0] == CTRL('M')) {
 		    written = 1;
-		    ldisc->back->newline(ldisc->back, ldisc->backhandle, ldisc->newline);
+		    ldisc->back->newline(ldisc->backhandle, ldisc->newline);
 		}
 		else if (ldisc->protocol == PROT_TELNET) {
 		    switch (buf[0]) {
@@ -363,21 +363,5 @@ void ldisc_send(void *handle, const char *buf, int len, int interactive)
 		ldisc->back->send(ldisc->backhandle, buf, len);
 	    }
 	}
-    }
-}
-
-void default_newline(Backend *back, void *handle, int newline_config)
-{
-    switch (newline_config) {
-      case NEWLINE_LF:
-	back->send(handle, "\n", 1);
-	break;
-      case NEWLINE_CRLF:
-	back->send(handle, "\r\n", 2);
-	break;
-      default:
-      case NEWLINE_CR:
-	back->send(handle, "\r", 1);
-	break;
     }
 }

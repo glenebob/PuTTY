@@ -1022,16 +1022,16 @@ static void telnet_special(void *handle, Telnet_Special code)
     }
 }
 
-void telnet_newline(Backend *back, void *handle, int newline_config)
+static void telnet_newline(void *handle, int newline_config)
 {
     Telnet telnet = (Telnet)handle;
 
     switch (newline_config) {
       case NEWLINE_LF:
-        back->send(handle, "\n", 1);
+        telnet_backend.send(handle, "\n", 1);
 	break;
       case NEWLINE_CR:
-	back->send(handle, "\r\0", 2);
+	telnet_backend.send(handle, "\r\0", 2);
 	break;
       default:
       case NEWLINE_CRLF:

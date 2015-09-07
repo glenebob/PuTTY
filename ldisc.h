@@ -23,11 +23,4 @@ typedef struct ldisc_tag {
     int buflen, bufsiz, quotenext;
 } *Ldisc;
 
-/*
- * Handle new line character from the terminal in the "normal" way,
- * as apposed to the Telnet way. The telnet backend implements its
- * own version of this function.
- */
-void default_newline(Backend *back, void *handle, int newline_config);
-
 #endif /* PUTTY_LDISC_H */

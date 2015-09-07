@@ -508,6 +508,22 @@ static void serial_special(void *handle, Telnet_Special code)
     return;
 }
 
+static void serial_newline(void *handle, int newline_config)
+{
+    switch (newline_config) {
+      case NEWLINE_LF:
+	serial_backend.send(handle, "\n", 1);
+	break;
+      case NEWLINE_CRLF:
+	serial_backend.send(handle, "\r\n", 2);
+	break;
+      default:
+      case NEWLINE_CR:
+	serial_backend.send(handle, "\r", 1);
+	break;
+    }
+}
+
 /*
  * Return a list of the special codes that make sense in this
  * protocol.
@@ -582,6 +598,7 @@ Backend serial_backend = {
     serial_sendbuffer,
     serial_size,
     serial_special,
+    serial_newline,
     serial_get_specials,
     serial_connected,
     serial_exitcode,
@@ -593,5 +610,6 @@ Backend serial_backend = {
     serial_cfg_info,
     "serial",
     PROT_SERIAL,
-    0
+    0,
+    NEWLINE_CR
 };

@@ -433,7 +433,7 @@ struct backend_tag {
     int (*sendbuffer) (void *handle);
     void (*size) (void *handle, int width, int height);
     void (*special) (void *handle, Telnet_Special code);
-    void (*newline) (Backend *back, void *handle, int newline_config);
+    void (*newline) (void *handle, int newline_config);
     const struct telnet_special *(*get_specials) (void *handle);
     int (*connected) (void *handle);
     int (*exitcode) (void *handle);

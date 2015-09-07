@@ -260,6 +260,22 @@ static void raw_special(void *handle, Telnet_Special code)
     return;
 }
 
+static void raw_newline(void *handle, int newline_config)
+{
+    switch (newline_config) {
+      case NEWLINE_LF:
+	raw_backend.send(handle, "\n", 1);
+	break;
+      case NEWLINE_CRLF:
+	raw_backend.send(handle, "\r\n", 2);
+	break;
+      default:
+      case NEWLINE_CR:
+	raw_backend.send(handle, "\r", 1);
+	break;
+    }
+}
+
 /*
  * Return a list of the special codes that make sense in this
  * protocol.
@@ -331,7 +347,7 @@ Backend raw_backend = {
     raw_sendbuffer,
     raw_size,
     raw_special,
-    default_newline,
+    raw_newline,
     raw_get_specials,
     raw_connected,
     raw_exitcode,
